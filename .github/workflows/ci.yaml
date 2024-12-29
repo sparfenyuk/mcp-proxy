@@ -105,3 +105,31 @@ jobs:
         with:
           jobs: ${{ toJSON(needs) }}
           allowed-skips: test-live
+
+  release:
+    needs: [check]
+    if: "success() && startsWith(github.ref, 'refs/tags/')"
+    runs-on: ubuntu-latest
+    environment: release
+
+    permissions:
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+
+      - name: check GITHUB_REF matches package version
+        uses: samuelcolvin/check-python-version@v4.1
+        with:
+          version_file_path: pyproject.toml
+
+      - run: uv build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

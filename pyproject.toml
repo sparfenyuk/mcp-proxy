@@ -1,7 +1,7 @@
 [project]
 name = "mcp-proxy"
 authors = [{ name = "Sergey Parfenyuk", email = "sergey.parfenyuk@gmail.com" }]
-version = "0.2.0"
+version = "0.2.1"
 requires-python = ">=3.11"
 dependencies = ["mcp"]
 
