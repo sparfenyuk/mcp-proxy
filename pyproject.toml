@@ -1,13 +1,44 @@
 [project]
 name = "mcp-proxy"
+description = "A MCP server which proxies requests to a remote MCP server over SSE transport."
 authors = [{ name = "Sergey Parfenyuk", email = "sergey.parfenyuk@gmail.com" }]
-version = "0.2.1"
+license = { file = "LICENSE" }
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Framework :: mcp",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Unix",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Commuinications :: Model Context Protocol",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+version = "0.2.2"
 requires-python = ">=3.11"
 dependencies = ["mcp"]
 
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
+
+[project.urls]
+Homepage = "https://github.com/sparfenyuk/mcp-proxy"
+Source = "https://github.com/sparfenyuk/mcp-proxy"
+Documentation = "https://github.com/sparfenyuk/mcp-proxy"
+Changelog = "https://github.com/sparfenyuk/mcp-proxy/releases"
 
 [project.scripts]
 mcp-proxy = "mcp_proxy.__main__:main"
