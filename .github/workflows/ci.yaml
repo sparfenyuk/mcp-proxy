@@ -92,7 +92,7 @@ jobs:
           path: htmlcov
           include-hidden-files: true
 
-      - run: uv run --frozen coverage report --fail-under 70
+      - run: uv run --frozen coverage report --fail-under 83
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
