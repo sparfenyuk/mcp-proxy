@@ -11,7 +11,7 @@ import logging
 import os
 import typing as t
 
-from . import run_sse_client
+from . import sse_client
 
 logging.basicConfig(level=logging.DEBUG)
 SSE_URL: t.Final[str] = os.getenv("SSE_URL", "")
@@ -23,7 +23,7 @@ if not SSE_URL:
 
 def main() -> None:
     """Start the client using asyncio."""
-    asyncio.run(run_sse_client(SSE_URL, api_access_token=API_ACCESS_TOKEN))
+    asyncio.run(sse_client(SSE_URL, api_access_token=API_ACCESS_TOKEN))
 
 
 if __name__ == "__main__":
