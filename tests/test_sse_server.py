@@ -2,7 +2,9 @@
 
 import asyncio
 from collections.abc import Generator
-from contextlib import asynccontextmanager
+import contextlib
+import threading
+import time
 
 import uvicorn
 from mcp import types
@@ -14,25 +16,32 @@ from starlette.applications import Starlette
 from mcp_proxy.sse_server import create_starlette_app
 
 
-@asynccontextmanager
-async def start_http_server(app: Starlette) -> Generator[str]:
-    """Start an http server in the background and return a url to connect to it.
+class BackgroundServer(uvicorn.Server):
+    """A test server that runs in a background thread."""
 
-    This sets port=0 to pick a free available port to avoid collisions. We don't
-    have an explicit way to be notified when the server is ready so poll until
-    we can grab the port number.
-    """
-    config = uvicorn.Config(app, port=0, log_level="info")
-    server = uvicorn.Server(config)
-    task = asyncio.create_task(server.serve())
-    while not server.started:  # noqa: ASYNC110
-        await asyncio.sleep(0.01)
-    hostport = next(
-        iter([socket.getsockname() for server in server.servers for socket in server.sockets]),
-    )
-    yield f"http://{hostport[0]}:{hostport[1]}"
-    task.cancel()
-    server.shutdown()
+    def install_signal_handlers(self):
+        """Do not install signal handlers."""
+        pass
+
+    @contextlib.asynccontextmanager
+    async def run_in_background(self):
+        """Run the server in a background thread."""
+        task = asyncio.create_task(self.serve())
+        try:
+            while not self.started:
+                await asyncio.sleep(1e-3)
+            yield
+        finally:
+            task.cancel()
+            self.shutdown()
+
+    @property
+    def url(self):
+        """Return the url of the started server."""
+        hostport = next(
+            iter([socket.getsockname() for server in self.servers for socket in server.sockets]),
+        )
+        return f"http://{hostport[0]}:{hostport[1]}"
 
 
 async def test_create_starlette_app() -> None:
@@ -45,8 +54,10 @@ async def test_create_starlette_app() -> None:
 
     app = create_starlette_app(server)
 
-    async with start_http_server(app) as url:
-        mcp_url = f"{url}/sse"
+    config = uvicorn.Config(app, port=0, log_level="info")
+    server = BackgroundServer(config)
+    async with server.run_in_background():
+        mcp_url = f"{server.url}/sse"
         async with sse_client(url=mcp_url) as streams, ClientSession(*streams) as session:
             await session.initialize()
             response = await session.list_prompts()
