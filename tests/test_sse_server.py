@@ -1,17 +1,13 @@
 """Tests for the sse server."""
 
 import asyncio
-from collections.abc import Generator
 import contextlib
-import threading
-import time
 
 import uvicorn
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.server import Server
-from starlette.applications import Starlette
 
 from mcp_proxy.sse_server import create_starlette_app
 
@@ -19,16 +15,15 @@ from mcp_proxy.sse_server import create_starlette_app
 class BackgroundServer(uvicorn.Server):
     """A test server that runs in a background thread."""
 
-    def install_signal_handlers(self):
+    def install_signal_handlers(self) -> None:
         """Do not install signal handlers."""
-        pass
 
     @contextlib.asynccontextmanager
-    async def run_in_background(self):
+    async def run_in_background(self) -> None:
         """Run the server in a background thread."""
         task = asyncio.create_task(self.serve())
         try:
-            while not self.started:
+            while not self.started:  # noqa: ASYNC110
                 await asyncio.sleep(1e-3)
             yield
         finally:
@@ -36,7 +31,7 @@ class BackgroundServer(uvicorn.Server):
             self.shutdown()
 
     @property
-    def url(self):
+    def url(self) -> str:
         """Return the url of the started server."""
         hostport = next(
             iter([socket.getsockname() for server in self.servers for socket in server.sockets]),
