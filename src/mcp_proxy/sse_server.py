@@ -10,7 +10,7 @@ from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.routing import Route, Mount
+from starlette.routing import Mount, Route
 
 from . import create_proxy_server
 
