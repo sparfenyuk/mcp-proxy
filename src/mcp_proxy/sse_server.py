@@ -44,7 +44,7 @@ def create_starlette_app(mcp_server: Server, debug: bool | None = None) -> Starl
         debug=debug,
         routes=[
             Route("/sse", endpoint=handle_sse),
-            Mount("/messages/", app=sse.handle_post_message)
+            Mount("/messages/", app=sse.handle_post_message),
         ],
     )
 
