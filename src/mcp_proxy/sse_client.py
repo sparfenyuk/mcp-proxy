@@ -4,7 +4,7 @@ from mcp import server
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 
-from .proxy import create_proxy_server
+from .proxy_server import create_proxy_server
 
 
 async def run_sse_client(url: str, api_access_token: str | None = None) -> None:
