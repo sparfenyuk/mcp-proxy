@@ -10,7 +10,7 @@ from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.routing import Route
+from starlette.routing import Route, Mount
 
 from . import create_proxy_server
 
@@ -26,7 +26,7 @@ class SseServerSettings:
 
 def create_starlette_app(mcp_server: Server, debug: bool | None = None) -> Starlette:
     """Create a Starlette application that can server the provied mcp server with SSE."""
-    sse = SseServerTransport("/messages")
+    sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request) -> None:
         async with sse.connect_sse(
@@ -40,14 +40,11 @@ def create_starlette_app(mcp_server: Server, debug: bool | None = None) -> Starl
                 mcp_server.create_initialization_options(),
             )
 
-    async def handle_messages(request: Request) -> None:
-        await sse.handle_post_message(request.scope, request.receive, request._send)  # noqa: SLF001
-
     return Starlette(
         debug=debug,
         routes=[
             Route("/sse", endpoint=handle_sse),
-            Route("/messages", endpoint=handle_messages, methods=["POST"]),
+            Mount("/messages/", app=sse.handle_post_message)
         ],
     )
 
