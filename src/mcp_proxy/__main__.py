@@ -81,7 +81,6 @@ def main() -> None:
     if not args.command_or_url:
         parser.print_help()
         sys.exit(1)
-        return
 
     if (
         SSE_URL
