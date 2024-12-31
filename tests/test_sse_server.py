@@ -3,11 +3,11 @@
 import asyncio
 import contextlib
 
+import uvicorn
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.server import Server
-import uvicorn
 
 from mcp_proxy.sse_server import create_starlette_app
 
