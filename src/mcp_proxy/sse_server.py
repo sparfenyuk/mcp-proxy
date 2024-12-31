@@ -19,8 +19,8 @@ from . import create_proxy_server
 class SseServerSettings:
     """Settings for the server."""
 
-    host: str = "0.0.0.0:"
-    post: int = 8000
+    host: str = "0.0.0.0"
+    port: int = 8000
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
