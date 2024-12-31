@@ -10,8 +10,7 @@
 
 ## About
 
-Connect to MCP servers that run on SSE transport, or expose stdio servers as an
-SSE server using the MCP Proxy server.
+Connect to MCP servers that run on SSE transport, or expose stdio servers as an SSE server using the MCP Proxy server.
 
 ```mermaid
 graph LR
@@ -64,19 +63,19 @@ Configure Claude Desktop to recognize the MCP server.
 
 2. Add the server configuration
 
-    ```json
-    {
-      "mcpServers": {
-        "mcp-proxy": {
-            "command": "mcp-proxy",
-            "env": {
-              "SSE_URL": "http://example.io/sse"
-            }
+```json
+{
+  "mcpServers": {
+    "mcp-proxy": {
+        "command": "mcp-proxy",
+        "env": {
+          "SSE_URL": "http://example.io/sse"
         }
-      }
     }
+  }
+}
 
-    ```
+```
 
 ## Detailed Configuration
 
@@ -105,9 +104,9 @@ Environment Variables
 
 Example usage:
 
-  ```bash
-  uv run mcp-proxy --sse-url=http://example.io/sse
-  ```
+```bash
+uv run mcp-proxy --sse-url=http://example.io/sse
+```
 
 
 ### SSE to stdio
@@ -126,8 +125,8 @@ Arguments
 
 Example usage:
 
-  ```bash
-  uv run mcp-proxy --sse-port=8080 -e FOO=BAR -- /path/to/command arg1 arg2
-  ```
+```bash
+uv run mcp-proxy --sse-port=8080 -e FOO=BAR -- /path/to/command arg1 arg2
+```
 
 This will start an MCP server that can be connected to at `http://127.0.0.1:8080/sse`
