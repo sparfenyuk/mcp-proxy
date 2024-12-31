@@ -12,7 +12,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.routing import Mount, Route
 
-from . import create_proxy_server
+from .proxy_server import create_proxy_server
 
 
 @dataclass
