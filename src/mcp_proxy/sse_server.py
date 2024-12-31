@@ -56,7 +56,6 @@ async def run_sse_server(
     """Run the stdio client and expose an SSE server.
 
     Args:
-    ----
         stdio_params: The parameters for the stdio client that spawns a stdio server.
         sse_settings: The settings for the SSE server that accepts incoming requests.
 
