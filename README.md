@@ -27,6 +27,14 @@ graph LR
 
 ## Installation
 
+The stable version of the package is available on the PyPI repository. You can install it using the following command:
+
+```bash
+uv tool install mcp-proxy
+```
+
+The latest version of the package can be installed from the git repository using the following command:
+
 ```bash
 uv tool install git+https://github.com/sparfenyuk/mcp-proxy
 ```
