@@ -12,13 +12,12 @@
 
 Connect to MCP servers that run on SSE transport, or expose stdio servers as an SSE server using the MCP Proxy server.
 
+## stdio to SSE
+
 ```mermaid
 graph LR
     A["Claude Desktop"] <--> B["mcp-proxy"]
     B <--> C["External MCP Server"]
-
-    A["LLM Client"] <--> B["mcp-proxy"]
-    B <--> C["Local MCP Server"]
 
     style A fill:#ffe6f9,stroke:#333,color:black,stroke-width:2px
     style B fill:#e6e6ff,stroke:#333,color:black,stroke-width:2px
@@ -27,6 +26,19 @@ graph LR
 
 > [!TIP]
 > As of now, Claude Desktop does not support MCP servers that run on SSE transport. This server is a workaround to enable the support.
+
+## SSE to stdio
+
+```mermaid
+graph LR
+    A["LLM Client"] <--> B["mcp-proxy"]
+    B <--> C["Local MCP Server"]
+
+    style A fill:#ffe6f9,stroke:#333,color:black,stroke-width:2px
+    style B fill:#e6e6ff,stroke:#333,color:black,stroke-width:2px
+    style C fill:#e6ffe6,stroke:#333,color:black,stroke-width:2px
+```
+
 
 ## Installation
 
