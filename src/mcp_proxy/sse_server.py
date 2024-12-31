@@ -19,7 +19,7 @@ from . import create_proxy_server
 class SseServerSettings:
     """Settings for the server."""
 
-    host: str = "0.0.0.0"
+    bind_host: str = "127.0.0.1"
     port: int = 8000
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
@@ -70,7 +70,7 @@ async def run_sse_server(
         # Configure HTTP server
         config = uvicorn.Config(
             starlette_app,
-            host=sse_settings.host,
+            host=sse_settings.bind_host,
             port=sse_settings.port,
             log_level=sse_settings.log_level.lower(),
         )
