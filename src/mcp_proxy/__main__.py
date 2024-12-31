@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import logging
 import os
+import sys
 import typing as t
 
 from mcp.client.stdio import StdioServerParameters
@@ -79,7 +80,8 @@ def main() -> None:
 
     if not args.command_or_url:
         parser.print_help()
-        return 1
+        sys.exit(1)
+        return
 
     if (
         SSE_URL
@@ -89,7 +91,7 @@ def main() -> None:
         # Start a client connected to the SSE server, and expose as a stdio server
         logging.debug("Starting SSE client and stdio server")
         asyncio.run(run_sse_client(args.command_or_url, api_access_token=API_ACCESS_TOKEN))
-        return None
+        return
 
     # Start a client connected to the given command, and expose as an SSE server
     logging.debug("Starting stdio client and SSE server")
@@ -103,7 +105,6 @@ def main() -> None:
         port=args.sse_port,
     )
     asyncio.run(run_sse_server(stdio_params, sse_settings))
-    return None
 
 
 if __name__ == "__main__":

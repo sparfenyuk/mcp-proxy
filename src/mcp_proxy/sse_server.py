@@ -64,7 +64,7 @@ async def run_sse_server(
         mcp_server = await create_proxy_server(session)
 
         # Bind SSE request handling to MCP server
-        starlette_app = create_starlette_app(mcp_server, sse_settings.log_level == "DEBUG")
+        starlette_app = create_starlette_app(mcp_server, debug=(sse_settings.log_level == "DEBUG"))
 
         # Configure HTTP server
         config = uvicorn.Config(
