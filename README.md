@@ -111,8 +111,7 @@ uv run mcp-proxy --sse-url=http://example.io/sse
 
 ### SSE to stdio
 
-Run a proxy server exposing an SSE server that connects to a local stdio server. This allows remote
-connections to the stdio server.
+Run a proxy server exposing an SSE server that connects to a local stdio server. This allows remote connections to the stdio server.
 
 Arguments
 
