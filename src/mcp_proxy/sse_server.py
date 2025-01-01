@@ -24,7 +24,7 @@ class SseServerSettings:
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
-def create_starlette_app(mcp_server: Server, debug: bool = False) -> Starlette:  # noqa: FBT001, FBT002
+def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
     """Create a Starlette application that can server the provied mcp server with SSE."""
     sse = SseServerTransport("/messages/")
 
@@ -41,7 +41,7 @@ def create_starlette_app(mcp_server: Server, debug: bool = False) -> Starlette: 
             )
 
     return Starlette(
-        debug=debug or False,
+        debug=debug,
         routes=[
             Route("/sse", endpoint=handle_sse),
             Mount("/messages/", app=sse.handle_post_message),
