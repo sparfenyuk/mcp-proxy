@@ -24,7 +24,7 @@ classifiers = [
     "Topic :: Utilities",
     "Typing :: Typed",
 ]
-version = "0.2.2"
+version = "0.3.0"
 requires-python = ">=3.11"
 dependencies = ["mcp", "uvicorn>=0.34.0"]
 
