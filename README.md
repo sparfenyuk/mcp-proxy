@@ -1,5 +1,7 @@
 # mcp-proxy
 
+[![smithery badge](https://smithery.ai/badge/mcp-proxy)](https://smithery.ai/server/mcp-proxy)
+
 - [mcp-proxy](#mcp-proxy)
   - [About](#about)
   - [Installation](#installation)
@@ -26,6 +28,14 @@ graph LR
 > As of now, Claude Desktop does not support MCP servers that run on SSE transport. This server is a workaround to enable the support.
 
 ## Installation
+
+### Installing via Smithery
+
+To install MCP Proxy for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-proxy):
+
+```bash
+npx -y @smithery/cli install mcp-proxy --client claude
+```
 
 The stable version of the package is available on the PyPI repository. You can install it using the following command:
 
