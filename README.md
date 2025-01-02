@@ -40,15 +40,16 @@ This mode requires the URL of the SSE server to be set. The `API_ACCESS_TOKEN` e
 
 Arguments
 
-| Name           | Required                   | Description                               | Example               |
-| -------------- | -------------------------- | ----------------------------------------- | --------------------- |
-| command_or_url | Yes, if `SSE_URL` is unset | The MCP server SSE endpoint to connect to | http://example.io/sse |
+| Name                 | Required | Description                                                           | Example               |
+| -------------------- | -------- | --------------------------------------------------------------------- | --------------------- |
+| `command_or_url`     | Yes      | The MCP server SSE endpoint to connect to                             | http://example.io/sse |
+| `--api-access-token` | No       | Will be sent as a `Bearer` access token in the `Authorization` header | YOUR_TOKEN            |
 
 Environment Variables
 
-| Name               | Required | Description                                                           | Example |
-| ------------------ | -------- | --------------------------------------------------------------------- | ------- |
-| `API_ACCESS_TOKEN` | No       | Will be sent as a `Bearer` access token in the `Authorization` header | -       |
+| Name               | Required | Description                                 | Example    |
+| ------------------ | -------- | ------------------------------------------- | ---------- |
+| `API_ACCESS_TOKEN` | No       | Can be used instead of `--api-access-token` | YOUR_TOKEN |
 
 ### 1.2 Example usage
 
@@ -92,19 +93,29 @@ This mode requires the `--sse-port` argument to be set. The `--sse-host` argumen
 
 Arguments
 
-| Name          | Required                   | Description                                                       | Example          |
-| ------------- | -------------------------- | ----------------------------------------------------------------- | ---------------- |
-| `--sse-port`  | Yes                        | The SSE server port to listen on                                  | 8080             |
-| `--sse-host`  | No, `localhost` by default | The host IP address that the SSE server will listen on            | 0.0.0.0          |
-| `--env`       | No                         | Additional environment variables to pass to the MCP stdio server  | FOO=BAR          |
-| command       | Yes                        | The path for the MCP stdio server command line                    | uvx              |
-| arg1 arg2 ... | No                         | Additional arguments to the MCP stdio server command line program | mcp-server-fetch |
+| Name             | Required                   | Description                                                      | Example              |
+| ---------------- | -------------------------- | ---------------------------------------------------------------- | -------------------- |
+| `command_or_url` | Yes                        | The command to spawn the MCP stdio server                        | uvx mcp-server-fetch |
+| `--sse-port`     | No, random available       | The SSE server port to listen on                                 | 8080                 |
+| `--sse-host`     | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on           | 0.0.0.0              |
+| `--env`          | No                         | Additional environment variables to pass to the MCP stdio server | FOO=BAR              |
 
 ### 2.2 Example usage
 
 To start the `mcp-proxy` server that listens on port 8080 and connects to the local MCP server:
 
 ```bash
+# Start the MCP server behind the proxy
+mcp-proxy uvx mcp-server-fetch
+
+# Start the MCP server behind the proxy with a custom port
+mcp-proxy --sse-port=8080 uvx mcp-server-fetch
+
+# Start the MCP server behind the proxy with a custom host and port
+mcp-proxy --sse-host=0.0.0.0 --sse-port=8080 uvx mcp-server-fetch
+
+# Start the MCP server behind the proxy with a custom user agent
+# Note that the `--` separator is used to separate the `mcp-proxy` arguments from the `mcp-server-fetch` arguments
 mcp-proxy --sse-port=8080 -- uvx mcp-server-fetch --user-agent=YourUserAgent
 ```
 
@@ -142,10 +153,10 @@ Check the `mcp-proxy` server by running it with the `mcp-server-fetch` server. Y
 
 ```bash
 # Run the stdio server called mcp-server-fetch behind the proxy over SSE
-uv run mcp-proxy --sse-port=8080 -- uvx mcp-server-fetch &
+mcp-proxy --sse-port=8080 uvx mcp-server-fetch &
 
 # Connect to the SSE proxy server spawned above using another instance of mcp-proxy given the URL of the SSE server
-uv run mcp-proxy http://localhost:8080/sse
+mcp-proxy http://localhost:8080/sse
 
 # Send CTRL+C to stop the second server
 

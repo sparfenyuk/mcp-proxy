@@ -19,19 +19,32 @@ from .sse_client import run_sse_client
 from .sse_server import SseServerSettings, run_sse_server
 
 logging.basicConfig(level=logging.DEBUG)
-SSE_URL: t.Final[str | None] = os.getenv("SSE_URL", None)
+SSE_URL: t.Final[str | None] = os.getenv(
+    "SSE_URL",
+    None,
+)  # Left for backwards compatibility. Will be removed in future.
 API_ACCESS_TOKEN: t.Final[str | None] = os.getenv("API_ACCESS_TOKEN", None)
 
 
 def main() -> None:
     """Start the client using asyncio."""
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=("Start the MCP proxy in one of two possible modes: as a SSE or stdio client."),
+        epilog=(
+            "Examples:\n"
+            "  mcp-proxy http://localhost:8080/sse\n"
+            "  mcp-proxy --api-access-token YOUR_TOKEN http://localhost:8080/sse\n"
+            "  mcp-proxy --sse-port 8080 -- your-command --arg1 value1 --arg2 value2\n"
+            "  mcp-proxy your-command --sse-port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE\n"
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
+    )
     parser.add_argument(
         "command_or_url",
         help=(
-            "Command or URL to connect to. When a URL, will run an SSE client "
-            "to connect to the server, otherwise will run the command and "
-            "connect as a stdio client. Can also be set as environment variable SSE_URL."
+            "Command or URL to connect to. When a URL, will run a SSE client, "
+            "otherwise will run the given command and connect as a stdio client. "
+            "See corresponding options for more details."
         ),
         nargs="?",  # Required below to allow for coming form env var
         default=SSE_URL,
@@ -51,7 +64,7 @@ def main() -> None:
     stdio_client_options.add_argument(
         "args",
         nargs="*",
-        help="Arguments to the command to run to spawn the server",
+        help="Any extra arguments to the command to spawn the server",
     )
     stdio_client_options.add_argument(
         "-e",
@@ -67,13 +80,13 @@ def main() -> None:
     sse_server_group.add_argument(
         "--sse-port",
         type=int,
-        default=None,
-        help="Port to expose an SSE server on",
+        default=0,
+        help="Port to expose a SSE server on. Default is a random port",
     )
     sse_server_group.add_argument(
         "--sse-host",
         default="127.0.0.1",
-        help="Host to expose an SSE server on",
+        help="Host to expose a SSE server on. Default is 127.0.0.1",
     )
 
     args = parser.parse_args()
