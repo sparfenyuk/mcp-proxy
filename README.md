@@ -9,6 +9,7 @@
     - [2.1 Configuration](#21-configuration)
     - [2.2 Example usage](#22-example-usage)
   - [Installation](#installation)
+  - [Command line arguments](#command-line-arguments)
   - [Testing](#testing)
 
 ## About
@@ -146,6 +147,39 @@ uv tool install git+https://github.com/sparfenyuk/mcp-proxy
 
 > [!NOTE]
 > If you want to delete the server, use the `uv tool uninstall mcp-proxy` command.
+
+## Command line arguments
+
+```bash
+usage: mcp-proxy [-h] [--api-access-token API_ACCESS_TOKEN] [-e KEY VALUE] [--sse-port SSE_PORT] [--sse-host SSE_HOST] [command_or_url] [args ...]
+
+Start the MCP proxy in one of two possible modes: as a SSE or stdio client.
+
+positional arguments:
+  command_or_url        Command or URL to connect to. When a URL, will run a SSE client, otherwise will run the given command and connect as a stdio client. See corresponding options for more details.
+
+options:
+  -h, --help            show this help message and exit
+
+SSE client options:
+  --api-access-token API_ACCESS_TOKEN
+                        Access token Authorization header passed by the client to the SSE server. Can also be set as environment variable API_ACCESS_TOKEN.
+
+stdio client options:
+  args                  Any extra arguments to the command to spawn the server
+  -e KEY VALUE, --env KEY VALUE
+                        Environment variables used when spawning the server. Can be used multiple times.
+
+SSE server options:
+  --sse-port SSE_PORT   Port to expose a SSE server on. Default is a random port
+  --sse-host SSE_HOST   Host to expose a SSE server on. Default is 127.0.0.1
+
+Examples:
+  mcp-proxy http://localhost:8080/sse
+  mcp-proxy --api-access-token YOUR_TOKEN http://localhost:8080/sse
+  mcp-proxy --sse-port 8080 -- your-command --arg1 value1 --arg2 value2
+  mcp-proxy your-command --sse-port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE
+```
 
 ## Testing
 
