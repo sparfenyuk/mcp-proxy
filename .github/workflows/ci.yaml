@@ -111,7 +111,7 @@ jobs:
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()
-    needs: [lint, test, coverage]
+    needs: [lint, test, coverage, mypy]
     runs-on: ubuntu-latest
 
     steps:
