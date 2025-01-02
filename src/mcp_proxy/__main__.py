@@ -29,7 +29,9 @@ API_ACCESS_TOKEN: t.Final[str | None] = os.getenv("API_ACCESS_TOKEN", None)
 def main() -> None:
     """Start the client using asyncio."""
     parser = argparse.ArgumentParser(
-        description=("Start the MCP proxy in one of two possible modes: as a SSE or stdio client."),
+        description=(
+            "Start the MCP proxy in one of two possible modes: as an SSE or stdio client."
+        ),
         epilog=(
             "Examples:\n"
             "  mcp-proxy http://localhost:8080/sse\n"
@@ -42,7 +44,7 @@ def main() -> None:
     parser.add_argument(
         "command_or_url",
         help=(
-            "Command or URL to connect to. When a URL, will run a SSE client, "
+            "Command or URL to connect to. When a URL, will run an SSE client, "
             "otherwise will run the given command and connect as a stdio client. "
             "See corresponding options for more details."
         ),
@@ -81,12 +83,12 @@ def main() -> None:
         "--sse-port",
         type=int,
         default=0,
-        help="Port to expose a SSE server on. Default is a random port",
+        help="Port to expose an SSE server on. Default is a random port",
     )
     sse_server_group.add_argument(
         "--sse-host",
         default="127.0.0.1",
-        help="Host to expose a SSE server on. Default is 127.0.0.1",
+        help="Host to expose an SSE server on. Default is 127.0.0.1",
     )
 
     args = parser.parse_args()

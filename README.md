@@ -37,7 +37,7 @@ graph LR
 
 ### 1.1 Configuration
 
-This mode requires the URL of the SSE server to be set. The `API_ACCESS_TOKEN` environment variable can be set to pass the access token to the remote server.
+This mode requires passing the URL to the MCP Server SSE endpoint as the first argument to the program.
 
 Arguments
 
