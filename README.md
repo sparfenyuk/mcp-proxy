@@ -138,7 +138,7 @@ uv tool install git+https://github.com/sparfenyuk/mcp-proxy
 
 ## Testing
 
-Check the `mcp-proxy` server by running it with the `mcp-server-fetch` server. You can use the inspector tool to test the target server.
+Check the `mcp-proxy` server by running it with the `mcp-server-fetch` server. You can use the [inspector tool](https://modelcontextprotocol.io/docs/tools/inspector) to test the target server.
 
 ```bash
 # Run the stdio server called mcp-server-fetch behind the proxy over SSE
