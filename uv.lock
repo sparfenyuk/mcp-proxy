@@ -204,7 +204,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp" },
+    { name = "mcp", specifier = ">=1.2.0,<2" },
     { name = "uvicorn", specifier = ">=0.34.0" },
 ]
 

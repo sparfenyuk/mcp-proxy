@@ -26,7 +26,7 @@ classifiers = [
 ]
 version = "0.3.1"
 requires-python = ">=3.11"
-dependencies = ["mcp", "uvicorn>=0.34.0"]
+dependencies = ["mcp>=1.2.0,<2", "uvicorn>=0.34.0"]
 
 [build-system]
 requires = ["setuptools"]
