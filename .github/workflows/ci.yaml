@@ -56,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
     env:
       UV_PYTHON: ${{ matrix.python-version }}
     steps:
@@ -97,15 +97,12 @@ jobs:
 
       - run: uv sync --frozen
       - run: uv run --frozen coverage combine coverage
+      - run: uv run --frozen coverage xml
 
-      - run: uv run --frozen coverage html --show-contexts --title "Coverage for ${{ github.sha }}"
-
-      - name: Store coverage html
-        uses: actions/upload-artifact@v4
+      - name: Upload coverage reports to Codecov
+        uses: codecov/codecov-action@v5
         with:
-          name: coverage-html
-          path: htmlcov
-          include-hidden-files: true
+          token: ${{ secrets.CODECOV_TOKEN }}
 
       - run: uv run --frozen coverage report --fail-under 83
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks

@@ -1,5 +1,9 @@
 # mcp-proxy
 
+![GitHub License](https://img.shields.io/github/license/sparfenyuk/mcp-proxy)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/mcp-proxy)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-proxy)
+[![codecov](https://codecov.io/gh/sparfenyuk/mcp-proxy/graph/badge.svg?token=31VV9L7AZQ)](https://codecov.io/gh/sparfenyuk/mcp-proxy)
 [![smithery badge](https://smithery.ai/badge/mcp-proxy)](https://smithery.ai/server/mcp-proxy)
 
 - [mcp-proxy](#mcp-proxy)
@@ -11,6 +15,7 @@
     - [2.1 Configuration](#21-configuration)
     - [2.2 Example usage](#22-example-usage)
   - [Installation](#installation)
+    - [Installing via Smithery](#installing-via-smithery)
   - [Command line arguments](#command-line-arguments)
   - [Testing](#testing)
 
