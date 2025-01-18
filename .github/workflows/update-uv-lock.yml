@@ -19,6 +19,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: uv lock
-      - uses: stefanzweifel/git-auto-commit-action@v5
+      - uses: stefanzweifel/git-auto-commit-action@e348103e9026cc0eee72ae06630dbe30c8bf7a79 # v5.1.0
         with:
           commit_message: Update uv.lock file
