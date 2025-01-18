@@ -18,17 +18,18 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
-    env:
-      UV_PYTHON: "3.12"
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@b5f58b2abc5763ade55e4e9d0fe52cd1ff7979ca # v5.2.1
         with:
-          enable-cache: true
+          python-version: "3.12"
 
       - name: Install dependencies
         run: uv sync --frozen --all-extras --all-packages
+
+      - name: Ensure pip
+        run: uv run python -m ensurepip
 
       - uses: pre-commit/action@v3.0.0
         with:
@@ -38,14 +39,12 @@ jobs:
 
   mypy:
     runs-on: ubuntu-latest
-    env:
-      UV_PYTHON: "3.12"
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@b5f58b2abc5763ade55e4e9d0fe52cd1ff7979ca # v5.2.1
         with:
-          enable-cache: true
+          python-version: "3.12"
 
       - name: Install dependencies
         run: uv sync --frozen --all-extras --all-packages
@@ -61,14 +60,12 @@ jobs:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13"]
-    env:
-      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@b5f58b2abc5763ade55e4e9d0fe52cd1ff7979ca # v5.2.1
         with:
-          enable-cache: true
+          python-version: ${{ matrix.python-version }}
 
       - run: mkdir coverage
 
@@ -95,9 +92,9 @@ jobs:
           merge-multiple: true
           path: coverage
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@b5f58b2abc5763ade55e4e9d0fe52cd1ff7979ca # v5.2.1
         with:
-          enable-cache: true
+          python-version: "3.12"
 
       - run: uv sync --frozen
       - run: uv run --frozen coverage combine coverage
@@ -134,9 +131,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@b5f58b2abc5763ade55e4e9d0fe52cd1ff7979ca # v5.2.1
         with:
-          enable-cache: true
+          python-version: "3.12"
 
       - name: check GITHUB_REF matches package version
         uses: samuelcolvin/check-python-version@v4.1

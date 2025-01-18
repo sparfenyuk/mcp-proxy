@@ -13,13 +13,11 @@ permissions:
 jobs:
   update-lock:
     runs-on: ubuntu-latest
-    env:
-      UV_PYTHON: "3.12"
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v3
+      - uses: astral-sh/setup-uv@b5f58b2abc5763ade55e4e9d0fe52cd1ff7979ca # v5.2.1
         with:
-          enable-cache: true
+          python-version: "3.12"
       - run: uv lock
       - uses: stefanzweifel/git-auto-commit-action@v5
         with:
