@@ -1,0 +1,26 @@
+# Expected to be called whenever pyproject.file changes (i.e., dependabot.yml)
+name: Update uv.lock
+
+on:
+  pull_request:
+    paths:
+      - "pyproject.toml"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-lock:
+    runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - run: uv lock
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: Update uv.lock file
