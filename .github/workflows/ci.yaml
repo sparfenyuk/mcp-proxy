@@ -18,6 +18,8 @@ permissions:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.12"
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +28,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --python 3.11 --frozen --all-extras --all-packages
+        run: uv sync --frozen --all-extras --all-packages
 
       - uses: pre-commit/action@v3.0.0
         with:
@@ -36,6 +38,8 @@ jobs:
 
   mypy:
     runs-on: ubuntu-latest
+    env:
+      UV_PYTHON: "3.12"
     steps:
       - uses: actions/checkout@v4
 
@@ -44,10 +48,10 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --python 3.11 --frozen --all-extras --all-packages
+        run: uv sync --frozen --all-extras --all-packages
 
       - name: Run mypy
-        run: uv run --frozen mypy --python-version 3.11 src
+        run: uv run --frozen mypy --python-version $UV_PYTHON src
 
   test:
     name: test on ${{ matrix.python-version }}
