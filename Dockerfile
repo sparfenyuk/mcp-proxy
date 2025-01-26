@@ -25,6 +25,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.12-alpine
 
+LABEL org.opencontainers.image.source=https://github.com/sparfenyuk/mcp-proxy
+LABEL org.opencontainers.image.description="Connect to MCP servers that run on SSE transport, or expose stdio servers as an SSE server using the MCP Proxy server."
+LABEL org.opencontainers.image.licenses=MIT
+
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 
 # Place executables in the environment at the front of the path

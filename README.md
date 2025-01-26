@@ -16,6 +16,9 @@
     - [2.2 Example usage](#22-example-usage)
   - [Installation](#installation)
     - [Installing via Smithery](#installing-via-smithery)
+    - [Installing via PyPI](#installing-via-pypi)
+    - [Installing via Github repository (latest)](#installing-via-github-repository-latest)
+    - [Installing as container](#installing-as-container)
   - [Command line arguments](#command-line-arguments)
   - [Testing](#testing)
 
@@ -139,6 +142,8 @@ To install MCP Proxy for Claude Desktop automatically via [Smithery](https://smi
 npx -y @smithery/cli install mcp-proxy --client claude
 ```
 
+### Installing via PyPI
+
 The stable version of the package is available on the PyPI repository. You can install it using the following command:
 
 ```bash
@@ -151,6 +156,8 @@ pipx install mcp-proxy
 
 Once installed, you can run the server using the `mcp-proxy` command. See configuration options for each mode above.
 
+### Installing via Github repository (latest)
+
 The latest version of the package can be installed from the git repository using the following command:
 
 ```bash
@@ -162,6 +169,14 @@ uv tool install git+https://github.com/sparfenyuk/mcp-proxy
 
 > [!NOTE]
 > If you want to delete the server, use the `uv tool uninstall mcp-proxy` command.
+
+### Installing as container
+
+Starting from version 0.3.2, it's possible to pull and run the corresponding container image:
+
+```bash
+docker run -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2 --help
+```
 
 ## Command line arguments
 
