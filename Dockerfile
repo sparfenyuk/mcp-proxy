@@ -25,7 +25,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.12-alpine
 
-WORKDIR /app
  
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 
