@@ -51,16 +51,10 @@ This mode requires passing the URL to the MCP Server SSE endpoint as the first a
 
 Arguments
 
-| Name                 | Required | Description                                                           | Example               |
-| -------------------- | -------- | --------------------------------------------------------------------- | --------------------- |
-| `command_or_url`     | Yes      | The MCP server SSE endpoint to connect to                             | http://example.io/sse |
-| `--api-access-token` | No       | Will be sent as a `Bearer` access token in the `Authorization` header | YOUR_TOKEN            |
-
-Environment Variables
-
-| Name               | Required | Description                                 | Example    |
-| ------------------ | -------- | ------------------------------------------- | ---------- |
-| `API_ACCESS_TOKEN` | No       | Can be used instead of `--api-access-token` | YOUR_TOKEN |
+| Name                 | Required | Description                                                           | Example                                       |
+| -------------------- | -------- | --------------------------------------------------------------------- | ----------------------------------------------|
+| `command_or_url`     | Yes      | The MCP server SSE endpoint to connect to                             | http://example.io/sse                         |
+| `--headers`          | No       | Headers to use for the MCP server SSE connection                      | Authorization 'Bearer my-secret-access-token' |
 
 ### 1.2 Example usage
 
