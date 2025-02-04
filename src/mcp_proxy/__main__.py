@@ -25,7 +25,6 @@ SSE_URL: t.Final[str | None] = os.getenv(
 )  # Left for backwards compatibility. Will be removed in future.
 API_ACCESS_TOKEN: t.Final[str | None] = os.getenv("API_ACCESS_TOKEN", None)
 
-
 def main() -> None:
     """Start the client using asyncio."""
     parser = argparse.ArgumentParser(
@@ -54,13 +53,15 @@ def main() -> None:
 
     sse_client_group = parser.add_argument_group("SSE client options")
     sse_client_group.add_argument(
-        "--api-access-token",
-        default=API_ACCESS_TOKEN,
-        help=(
-            "Access token Authorization header passed by the client to the SSE "
-            "server. Can also be set as environment variable API_ACCESS_TOKEN."
-        ),
+        "-H",
+        "--headers",
+        nargs=2,
+        action="append",
+        metavar=("KEY", "VALUE"),
+        help="Headers to pass to the SSE server. Can be used multiple times.",
+        default=[],
     )
+
 
     stdio_client_options = parser.add_argument_group("stdio client options")
     stdio_client_options.add_argument(
@@ -104,7 +105,7 @@ def main() -> None:
     ):
         # Start a client connected to the SSE server, and expose as a stdio server
         logging.debug("Starting SSE client and stdio server")
-        asyncio.run(run_sse_client(args.command_or_url, api_access_token=API_ACCESS_TOKEN))
+        asyncio.run(run_sse_client(args.command_or_url, headers=dict(args.headers)))
         return
 
     # Start a client connected to the given command, and expose as an SSE server
