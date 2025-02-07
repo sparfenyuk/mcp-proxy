@@ -1,13 +1,15 @@
 """Create a local server that proxies requests to a remote server over SSE."""
 
+from typing import Any
+
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.server.stdio import stdio_server
-from typing import Dict, Any
+
 from .proxy_server import create_proxy_server
 
 
-async def run_sse_client(url: str, headers: Dict[str, Any] | None = None) -> None:
+async def run_sse_client(url: str, headers: dict[str, Any] | None = None) -> None:
     """Run the SSE client.
 
     Args:
