@@ -6,13 +6,19 @@ on:
 
 jobs:
   docker-hub:
-    name: Push Docker image to Docker Hub
+    name: Push multi-arch Docker image to Docker Hub
     runs-on: ubuntu-latest
     permissions:
       contents: read
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 #v3.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca #v3.9.0
 
       - name: Log in to Docker Hub
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
@@ -24,11 +30,14 @@ jobs:
         uses: docker/build-push-action@ca877d9245402d1537745e0e356eab47c3520991 # v6.13.0
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: "${{ github.repository }}:${{ github.event.release.tag_name }}-alpine"
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   ghcr-io:
-    name: Push Docker image to ghcr.io
+    name: Push multi-arch Docker image to ghcr.io
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -36,6 +45,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 #v3.4.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca #v3.9.0
 
       - name: Log in to GHCR
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
@@ -48,5 +63,8 @@ jobs:
         uses: docker/build-push-action@ca877d9245402d1537745e0e356eab47c3520991 # v6.13.0
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: "ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}-alpine"
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
