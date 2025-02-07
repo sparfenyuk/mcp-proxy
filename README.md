@@ -56,6 +56,12 @@ Arguments
 | `command_or_url`     | Yes      | The MCP server SSE endpoint to connect to                             | http://example.io/sse                         |
 | `--headers`          | No       | Headers to use for the MCP server SSE connection                      | Authorization 'Bearer my-secret-access-token' |
 
+Environment Variables
+
+| Name               | Required | Description                                                                  | Example    |
+| ------------------ | -------- | ---------------------------------------------------------------------------- | ---------- |
+| `API_ACCESS_TOKEN` | No       | Can be used instead of `--headers Authorization 'Bearer <API_ACCESS_TOKEN>'` | YOUR_TOKEN |
+
 ### 1.2 Example usage
 
 `mcp-proxy` is supposed to be started by the MCP Client, so the configuration must be done accordingly.
