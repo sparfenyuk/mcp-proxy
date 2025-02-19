@@ -118,9 +118,15 @@ def main() -> None:
 
     # Start a client connected to the given command, and expose as an SSE server
     logging.debug("Starting stdio client and SSE server")
-    env = dict(args.env)
+
+    # The environment variables passed to the server process
+    env = {}
+    # Pass through current environment variables if configured
     if args.pass_environment:
         env.update(os.environ)
+    # Pass in and override any environment variables with those passed on the command line
+    env.update(dict(args.env))
+
     stdio_params = StdioServerParameters(
         command=args.command_or_url,
         args=args.args,
