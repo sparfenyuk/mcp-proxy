@@ -104,12 +104,13 @@ This mode requires the `--sse-port` argument to be set. The `--sse-host` argumen
 
 Arguments
 
-| Name             | Required                   | Description                                                      | Example              |
-| ---------------- | -------------------------- | ---------------------------------------------------------------- | -------------------- |
-| `command_or_url` | Yes                        | The command to spawn the MCP stdio server                        | uvx mcp-server-fetch |
-| `--sse-port`     | No, random available       | The SSE server port to listen on                                 | 8080                 |
-| `--sse-host`     | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on           | 0.0.0.0              |
-| `--env`          | No                         | Additional environment variables to pass to the MCP stdio server | FOO=BAR              |
+| Name                 | Required                   | Description                                                      | Example              |
+| -------------------- | -------------------------- | ---------------------------------------------------------------- | -------------------- |
+| `command_or_url`     | Yes                        | The command to spawn the MCP stdio server                        | uvx mcp-server-fetch |
+| `--sse-port`         | No, random available       | The SSE server port to listen on                                 | 8080                 |
+| `--sse-host`         | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on           | 0.0.0.0              |
+| `--env`              | No                         | Additional environment variables to pass to the MCP stdio server | FOO=BAR              |
+| `--pass-environment` | No                         | Pass through all  environment variables when spawning the server | --no-pass-environment |
 
 ### 2.2 Example usage
 
@@ -181,7 +182,7 @@ docker run -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
 ## Command line arguments
 
 ```bash
-usage: mcp-proxy [-h] [-H KEY VALUE] [-e KEY VALUE] [--sse-port SSE_PORT] [--sse-host SSE_HOST] [command_or_url] [args ...]
+usage: mcp-proxy [-h] [-H KEY VALUE] [-e KEY VALUE] [--sse-port SSE_PORT] [--sse-host SSE_HOST] [--pass-environment] [command_or_url] [args ...]
 
 Start the MCP proxy in one of two possible modes: as an SSE or stdio client.
 
@@ -199,6 +200,8 @@ stdio client options:
   args                  Any extra arguments to the command to spawn the server
   -e KEY VALUE, --env KEY VALUE
                         Environment variables used when spawning the server. Can be used multiple times.
+  --pass-environment, --no-pass-environment
+                        Pass through all environment variables when spawning the server.
 
 SSE server options:
   --sse-port SSE_PORT   Port to expose an SSE server on. Default is a random port
