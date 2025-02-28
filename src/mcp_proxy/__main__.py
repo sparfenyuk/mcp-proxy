@@ -120,7 +120,7 @@ def main() -> None:
     logging.debug("Starting stdio client and SSE server")
 
     # The environment variables passed to the server process
-    env = {}
+    env: dict[str, str] = {}
     # Pass through current environment variables if configured
     if args.pass_environment:
         env.update(os.environ)
