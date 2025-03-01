@@ -107,26 +107,6 @@ jobs:
 
       - run: uv run --frozen coverage report --fail-under 83
 
-  docker:
-    runs-on: ubuntu-latest
-    needs: [lint, coverage, mypy]
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@4574d27a4764455b42196d70a065bc6853246a25 #v3.4.0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca #v3.9.0
-
-      - name: Build Docker image
-        uses: docker/build-push-action@ca877d9245402d1537745e0e356eab47c3520991 # v6.13.0
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: false
-          tags: "${{ github.repository }}:devel"
-
   # https://github.com/marketplace/actions/alls-green#why used for branch protection checks
   check:
     if: always()

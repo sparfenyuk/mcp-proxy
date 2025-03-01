@@ -3,6 +3,19 @@ name: Publish to container registries
 on:
   release:
     types: [published]
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - src/**
+      - Dockerfile
+      - pyproject.toml
+  pull_request:
+    paths:
+      - src/**
+      - Dockerfile
+      - pyproject.toml
 
 jobs:
   docker-hub:
@@ -20,8 +33,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca #v3.9.0
 
+      - name: Extract tags and labels for Docker
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        with:
+          images: ${{ github.repository }}
+          tags: |
+            type=sha,format=short,prefix=commit-
+            type=ref,event=tag
+          labels: |
+            maintainer="Sergey Parfenyuk"
+            org.opencontainers.image.source=https://github.com/sparfenyuk/mcp-proxy
+            org.opencontainers.image.description="Connect to MCP servers that run on SSE transport, or expose stdio servers as an SSE server using the MCP Proxy server."
+            org.opencontainers.image.licenses=MIT
+
       - name: Log in to Docker Hub
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        if: github.event_name != 'pull_request'
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
@@ -31,11 +59,17 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: "${{ github.repository }}:${{ github.event.release.tag_name }}-alpine"
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=image,name=target,annotation-index.org.opencontainers.image.description=Connect to MCP servers that run on SSE transport, or expose stdio servers as an SSE server using the MCP Proxy server.
+
+      - name: Clean Docker cache
+        if: github.event_name != 'pull_request'
+        run: |
+          docker system prune --force
 
   ghcr-io:
     name: Push multi-arch Docker image to ghcr.io
@@ -53,8 +87,23 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca #v3.9.0
 
+      - name: Extract tags and labels for Docker
+        id: meta
+        uses: docker/metadata-action@902fa8ec7d6ecbf8d84d538b9b233a880e428804 # v5.7.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,format=short,prefix=commit-
+            type=ref,event=tag
+          labels: |
+            maintainer="Sergey Parfenyuk"
+            org.opencontainers.image.source=https://github.com/sparfenyuk/mcp-proxy
+            org.opencontainers.image.description="Connect to MCP servers that run on SSE transport, or expose stdio servers as an SSE server using the MCP Proxy server."
+            org.opencontainers.image.licenses=MIT
+
       - name: Log in to GHCR
         uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567 # v3.3.0
+        if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -65,7 +114,14 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: "ghcr.io/${{ github.repository }}:${{ github.event.release.tag_name }}-alpine"
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Clean Docker cache
+        if: github.event_name != 'pull_request'
+        run: |
+          docker system prune --force
