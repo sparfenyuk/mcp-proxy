@@ -19,6 +19,8 @@
     - [Installing via PyPI](#installing-via-pypi)
     - [Installing via Github repository (latest)](#installing-via-github-repository-latest)
     - [Installing as container](#installing-as-container)
+  - [Extending the container image](#extending-the-container-image)
+  - [Docker Compose Setup](#docker-compose-setup)
   - [Command line arguments](#command-line-arguments)
   - [Testing](#testing)
 
@@ -179,6 +181,44 @@ Starting from version 0.3.2, it's possible to pull and run the corresponding con
 ```bash
 docker run -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
 ```
+
+## Extending the container image
+
+You can extend the `mcp-proxy` container image to include additional executables. For instance, `uv` is not included by default, but you can create a custom image with it:
+
+```Dockerfile
+# file: mcp-proxy.Dockerfile
+
+FROM ghcr.io/sparfenyuk/mcp-proxy:commit-7eb4a09
+
+# Install the 'uv' package
+RUN python3 -m ensurepip && pip install --no-cache-dir uv
+
+ENV PATH="/usr/local/bin:$PATH" \
+    UV_PYTHON_PREFERENCE=only-system
+
+ENTRYPOINT [ "mcp-proxy" ]
+```
+
+## Docker Compose Setup
+
+With the custom Dockerfile, you can define a service in your Docker Compose file:
+
+```yaml
+services:
+  mcp-proxy-custom:
+    build:
+      context: .
+      dockerfile: mcp-proxy.Dockerfile
+    network_mode: host
+    restart: unless-stopped
+    ports:
+      - 8096:8096
+    command: "--pass-environment --sse-port=8096 --sse-host 0.0.0.0 uvx mcp-server-fetch"
+```
+
+> [!NOTE]
+> Don't forget to set `--pass-environment` argument, otherwise you'll end up with the error "No interpreter found in managed installations or search path"
 
 ## Command line arguments
 
