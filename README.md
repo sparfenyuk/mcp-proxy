@@ -51,10 +51,10 @@ This mode requires passing the URL to the MCP Server SSE endpoint as the first a
 
 Arguments
 
-| Name                 | Required | Description                                                           | Example                                       |
-| -------------------- | -------- | --------------------------------------------------------------------- | ----------------------------------------------|
-| `command_or_url`     | Yes      | The MCP server SSE endpoint to connect to                             | http://example.io/sse                         |
-| `--headers`          | No       | Headers to use for the MCP server SSE connection                      | Authorization 'Bearer my-secret-access-token' |
+| Name             | Required | Description                                      | Example                                       |
+| ---------------- | -------- | ------------------------------------------------ | --------------------------------------------- |
+| `command_or_url` | Yes      | The MCP server SSE endpoint to connect to        | http://example.io/sse                         |
+| `--headers`      | No       | Headers to use for the MCP server SSE connection | Authorization 'Bearer my-secret-access-token' |
 
 Environment Variables
 
@@ -183,9 +183,7 @@ docker run -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
 ## Command line arguments
 
 ```bash
-usage: mcp-proxy [-h] [-H KEY VALUE] [-e KEY VALUE]
-                 [--pass-environment | --no-pass-environment]
-                 [--sse-port SSE_PORT] [--sse-host SSE_HOST]
+usage: mcp-proxy [-h] [-H KEY VALUE] [-e KEY VALUE] [--pass-environment | --no-pass-environment] [--sse-port SSE_PORT] [--sse-host SSE_HOST]
                  [--allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]]
                  [command_or_url] [args ...]
 
@@ -219,6 +217,7 @@ Examples:
   mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
   mcp-proxy --sse-port 8080 -- your-command --arg1 value1 --arg2 value2
   mcp-proxy your-command --sse-port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE
+  mcp-proxy your-command --sse-port 8080 --allow-origin='*'
 ```
 
 ## Testing

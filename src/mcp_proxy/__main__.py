@@ -37,6 +37,7 @@ def main() -> None:
             "  mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse\n"
             "  mcp-proxy --sse-port 8080 -- your-command --arg1 value1 --arg2 value2\n"
             "  mcp-proxy your-command --sse-port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE\n"
+            "  mcp-proxy your-command --sse-port 8080 --allow-origin='*'\n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
