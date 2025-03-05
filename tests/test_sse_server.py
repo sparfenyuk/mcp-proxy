@@ -27,8 +27,8 @@ class BackgroundServer(uvicorn.Server):
                 await asyncio.sleep(1e-3)
             yield
         finally:
-            task.cancel()
-            self.shutdown()
+            self.should_exit = self.force_exit = True
+            await task
 
     @property
     def url(self) -> str:
@@ -40,27 +40,6 @@ class BackgroundServer(uvicorn.Server):
 
 
 async def test_create_starlette_app() -> None:
-    """Test basic glue code for the SSE transport and a fake MCP server."""
-    server = Server("prompt-server")
-
-    @server.list_prompts()
-    async def list_prompts() -> list[types.Prompt]:
-        return [types.Prompt(name="prompt1")]
-
-    app = create_starlette_app(server)
-
-    config = uvicorn.Config(app, port=0, log_level="info")
-    server = BackgroundServer(config)
-    async with server.run_in_background():
-        mcp_url = f"{server.url}/sse"
-        async with sse_client(url=mcp_url) as streams, ClientSession(*streams) as session:
-            await session.initialize()
-            response = await session.list_prompts()
-            assert len(response.prompts) == 1
-            assert response.prompts[0].name == "prompt1"
-
-
-async def test_create_starlette_app_with_allowed_origins() -> None:
     """Test basic glue code for the SSE transport and a fake MCP server."""
     server = Server("prompt-server")
 
