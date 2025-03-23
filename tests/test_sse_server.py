@@ -20,7 +20,7 @@ class BackgroundServer(uvicorn.Server):
         """Do not install signal handlers."""
 
     @contextlib.asynccontextmanager
-    async def run_in_background(self) -> t.AsyncGenerator[None]:
+    async def run_in_background(self) -> t.AsyncIterator[None]:
         """Run the server in a background thread."""
         task = asyncio.create_task(self.serve())
         try:
