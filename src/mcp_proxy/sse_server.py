@@ -28,7 +28,7 @@ class SseServerSettings:
 
 
 def create_starlette_app(
-    mcp_server: Server,
+    mcp_server: Server[object],
     *,
     allow_origins: list[str] | None = None,
     debug: bool = False,

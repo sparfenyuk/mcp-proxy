@@ -9,6 +9,7 @@ Tests are running in two modes:
 The same test code is run on both to ensure parity.
 """
 
+import typing as t
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from unittest.mock import AsyncMock
@@ -25,14 +26,14 @@ from mcp_proxy.proxy_server import create_proxy_server
 
 TOOL_INPUT_SCHEMA = {"type": "object", "properties": {"input1": {"type": "string"}}}
 
-SessionContextManager = Callable[[Server], AbstractAsyncContextManager[ClientSession]]
+SessionContextManager = Callable[[Server[object]], AbstractAsyncContextManager[ClientSession]]
 
 # Direct server connection
 in_memory: SessionContextManager = create_connected_server_and_client_session
 
 
 @asynccontextmanager
-async def proxy(server: Server) -> AsyncGenerator[ClientSession, None]:
+async def proxy(server: Server[object]) -> AsyncGenerator[ClientSession, None]:
     """Create a connection to the server through the proxy server."""
     async with in_memory(server) as session:
         wrapped_server = await create_proxy_server(session)
@@ -49,16 +50,16 @@ def session_generator(request: pytest.FixtureRequest) -> SessionContextManager:
 
 
 @pytest.fixture
-def server() -> Server:
+def server() -> Server[object]:
     """Return a server instance."""
     return Server("test-server")
 
 
 @pytest.fixture
-def server_can_list_prompts(server: Server, prompt: types.Prompt) -> Server:
+def server_can_list_prompts(server: Server[object], prompt: types.Prompt) -> Server[object]:
     """Return a server instance with prompts."""
 
-    @server.list_prompts()
+    @server.list_prompts()  # type: ignore[no-untyped-call,misc]
     async def _() -> list[types.Prompt]:
         return [prompt]
 
@@ -67,20 +68,20 @@ def server_can_list_prompts(server: Server, prompt: types.Prompt) -> Server:
 
 @pytest.fixture
 def server_can_get_prompt(
-    server_can_list_prompts: Server,
+    server_can_list_prompts: Server[object],
     prompt_callback: Callable[[str, dict[str, str] | None], Awaitable[types.GetPromptResult]],
-) -> Server:
+) -> Server[object]:
     """Return a server instance with prompts."""
-    server_can_list_prompts.get_prompt()(prompt_callback)
+    server_can_list_prompts.get_prompt()(prompt_callback)  # type: ignore[no-untyped-call]
 
     return server_can_list_prompts
 
 
 @pytest.fixture
-def server_can_list_tools(server: Server, tool: types.Tool) -> Server:
+def server_can_list_tools(server: Server[object], tool: types.Tool) -> Server[object]:
     """Return a server instance with tools."""
 
-    @server.list_tools()
+    @server.list_tools()  # type: ignore[no-untyped-call,misc]
     async def _() -> list[types.Tool]:
         return [tool]
 
@@ -88,18 +89,21 @@ def server_can_list_tools(server: Server, tool: types.Tool) -> Server:
 
 
 @pytest.fixture
-def server_can_call_tool(server_can_list_tools: Server, tool: Callable[..., ...]) -> Server:
+def server_can_call_tool(
+    server_can_list_tools: Server[object],
+    tool: Callable[..., t.Any],
+) -> Server[object]:
     """Return a server instance with tools."""
-    server_can_list_tools.call_tool()(tool)
+    server_can_list_tools.call_tool()(tool)  # type: ignore[no-untyped-call]
 
     return server_can_list_tools
 
 
 @pytest.fixture
-def server_can_list_resources(server: Server, resource: types.Resource) -> Server:
+def server_can_list_resources(server: Server[object], resource: types.Resource) -> Server[object]:
     """Return a server instance with resources."""
 
-    @server.list_resources()
+    @server.list_resources()  # type: ignore[no-untyped-call,misc]
     async def _() -> list[types.Resource]:
         return [resource]
 
@@ -108,73 +112,73 @@ def server_can_list_resources(server: Server, resource: types.Resource) -> Serve
 
 @pytest.fixture
 def server_can_subscribe_resource(
-    server_can_list_resources: Server,
+    server_can_list_resources: Server[object],
     subscribe_callback: Callable[[AnyUrl], Awaitable[None]],
-) -> Server:
+) -> Server[object]:
     """Return a server instance with resource templates."""
-    server_can_list_resources.subscribe_resource()(subscribe_callback)
+    server_can_list_resources.subscribe_resource()(subscribe_callback)  # type: ignore[no-untyped-call]
 
     return server_can_list_resources
 
 
 @pytest.fixture
 def server_can_unsubscribe_resource(
-    server_can_list_resources: Server,
+    server_can_list_resources: Server[object],
     unsubscribe_callback: Callable[[AnyUrl], Awaitable[None]],
-) -> Server:
+) -> Server[object]:
     """Return a server instance with resource templates."""
-    server_can_list_resources.unsubscribe_resource()(unsubscribe_callback)
+    server_can_list_resources.unsubscribe_resource()(unsubscribe_callback)  # type: ignore[no-untyped-call]
 
     return server_can_list_resources
 
 
 @pytest.fixture
 def server_can_read_resource(
-    server_can_list_resources: Server,
+    server_can_list_resources: Server[object],
     resource_callback: Callable[[AnyUrl], Awaitable[str | bytes]],
-) -> Server:
+) -> Server[object]:
     """Return a server instance with resources."""
-    server_can_list_resources.read_resource()(resource_callback)
+    server_can_list_resources.read_resource()(resource_callback)  # type: ignore[no-untyped-call]
 
     return server_can_list_resources
 
 
 @pytest.fixture
 def server_can_set_logging_level(
-    server: Server,
+    server: Server[object],
     logging_level_callback: Callable[[types.LoggingLevel], Awaitable[None]],
-) -> Server:
+) -> Server[object]:
     """Return a server instance with logging capabilities."""
-    server.set_logging_level()(logging_level_callback)
+    server.set_logging_level()(logging_level_callback)  # type: ignore[no-untyped-call]
 
     return server
 
 
 @pytest.fixture
 def server_can_send_progress_notification(
-    server: Server,
-) -> Server:
+    server: Server[object],
+) -> Server[object]:
     """Return a server instance with logging capabilities."""
     return server
 
 
 @pytest.fixture
 def server_can_complete(
-    server: Server,
+    server: Server[object],
     complete_callback: Callable[
         [types.PromptReference | types.ResourceReference, types.CompletionArgument],
         Awaitable[types.Completion | None],
     ],
-) -> Server:
+) -> Server[object]:
     """Return a server instance with logging capabilities."""
-    server.completion()(complete_callback)
+    server.completion()(complete_callback)  # type: ignore[no-untyped-call]
     return server
 
 
 @pytest.mark.parametrize("prompt", [types.Prompt(name="prompt1")])
 async def test_list_prompts(
     session_generator: SessionContextManager,
-    server_can_list_prompts: Server,
+    server_can_list_prompts: Server[object],
     prompt: types.Prompt,
 ) -> None:
     """Test list_prompts."""
@@ -205,7 +209,7 @@ async def test_list_prompts(
 )
 async def test_list_tools(
     session_generator: SessionContextManager,
-    server_can_list_tools: Server,
+    server_can_list_tools: Server[object],
     tool: types.Tool,
 ) -> None:
     """Test list_tools."""
@@ -231,7 +235,7 @@ async def test_list_tools(
 )
 async def test_set_logging_error(
     session_generator: SessionContextManager,
-    server_can_set_logging_level: Server,
+    server_can_set_logging_level: Server[object],
     logging_level_callback: AsyncMock,
     log_level: types.LoggingLevel,
 ) -> None:
@@ -253,7 +257,7 @@ async def test_set_logging_error(
 @pytest.mark.parametrize("tool", [AsyncMock()])
 async def test_call_tool(
     session_generator: SessionContextManager,
-    server_can_call_tool: Server,
+    server_can_call_tool: Server[object],
     tool: AsyncMock,
 ) -> None:
     """Test call_tool."""
@@ -287,7 +291,7 @@ async def test_call_tool(
 )
 async def test_list_resources(
     session_generator: SessionContextManager,
-    server_can_list_resources: Server,
+    server_can_list_resources: Server[object],
     resource: types.Resource,
 ) -> None:
     """Test get_resource."""
@@ -307,7 +311,7 @@ async def test_list_resources(
 @pytest.mark.parametrize("prompt", [types.Prompt(name="prompt1")])
 async def test_get_prompt(
     session_generator: SessionContextManager,
-    server_can_get_prompt: Server,
+    server_can_get_prompt: Server[object],
     prompt_callback: AsyncMock,
 ) -> None:
     """Test get_prompt."""
@@ -334,7 +338,7 @@ async def test_get_prompt(
 )
 async def test_read_resource(
     session_generator: SessionContextManager,
-    server_can_read_resource: Server,
+    server_can_read_resource: Server[object],
     resource_callback: AsyncMock,
     resource: types.Resource,
 ) -> None:
@@ -361,7 +365,7 @@ async def test_read_resource(
 )
 async def test_subscribe_resource(
     session_generator: SessionContextManager,
-    server_can_subscribe_resource: Server,
+    server_can_subscribe_resource: Server[object],
     subscribe_callback: AsyncMock,
     resource: types.Resource,
 ) -> None:
@@ -388,7 +392,7 @@ async def test_subscribe_resource(
 )
 async def test_unsubscribe_resource(
     session_generator: SessionContextManager,
-    server_can_unsubscribe_resource: Server,
+    server_can_unsubscribe_resource: Server[object],
     unsubscribe_callback: AsyncMock,
     resource: types.Resource,
 ) -> None:
@@ -404,7 +408,7 @@ async def test_unsubscribe_resource(
 
 async def test_send_progress_notification(
     session_generator: SessionContextManager,
-    server_can_send_progress_notification: Server,
+    server_can_send_progress_notification: Server[object],
 ) -> None:
     """Test send_progress_notification."""
     async with session_generator(server_can_send_progress_notification) as session:
@@ -420,7 +424,7 @@ async def test_send_progress_notification(
 @pytest.mark.parametrize("complete_callback", [AsyncMock()])
 async def test_complete(
     session_generator: SessionContextManager,
-    server_can_complete: Server,
+    server_can_complete: Server[object],
     complete_callback: AsyncMock,
 ) -> None:
     """Test complete."""
@@ -445,7 +449,7 @@ async def test_complete(
 @pytest.mark.parametrize("tool", [AsyncMock()])
 async def test_call_tool_with_error(
     session_generator: SessionContextManager,
-    server_can_call_tool: Server,
+    server_can_call_tool: Server[object],
     tool: AsyncMock,
 ) -> None:
     """Test call_tool."""

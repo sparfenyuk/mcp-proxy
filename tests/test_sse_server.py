@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import typing as t
 
 import uvicorn
 from mcp import types
@@ -19,7 +20,7 @@ class BackgroundServer(uvicorn.Server):
         """Do not install signal handlers."""
 
     @contextlib.asynccontextmanager
-    async def run_in_background(self) -> None:
+    async def run_in_background(self) -> t.AsyncGenerator[None]:
         """Run the server in a background thread."""
         task = asyncio.create_task(self.serve())
         try:
@@ -41,13 +42,13 @@ class BackgroundServer(uvicorn.Server):
 
 async def test_create_starlette_app() -> None:
     """Test basic glue code for the SSE transport and a fake MCP server."""
-    server = Server("prompt-server")
+    mcp_server: Server[object] = Server("prompt-server")
 
-    @server.list_prompts()
+    @mcp_server.list_prompts()  # type: ignore[no-untyped-call,misc]
     async def list_prompts() -> list[types.Prompt]:
         return [types.Prompt(name="prompt1")]
 
-    app = create_starlette_app(server, allow_origins=["*"])
+    app = create_starlette_app(mcp_server, allow_origins=["*"])
 
     config = uvicorn.Config(app, port=0, log_level="info")
     server = BackgroundServer(config)

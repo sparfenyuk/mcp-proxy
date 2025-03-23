@@ -9,12 +9,12 @@ from mcp import server, types
 from mcp.client.session import ClientSession
 
 
-async def create_proxy_server(remote_app: ClientSession) -> server.Server:  # noqa: C901
+async def create_proxy_server(remote_app: ClientSession) -> server.Server[object]:  # noqa: C901
     """Create a server instance from a remote app."""
     response = await remote_app.initialize()
     capabilities = response.capabilities
 
-    app = server.Server(response.serverInfo.name)
+    app: server.Server[object] = server.Server(name=response.serverInfo.name)
 
     if capabilities.prompts:
 
