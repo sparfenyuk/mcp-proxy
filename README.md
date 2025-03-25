@@ -269,7 +269,7 @@ Check the `mcp-proxy` server by running it with the `mcp-server-fetch` server. Y
 mcp-proxy --sse-port=8080 uvx mcp-server-fetch &
 
 # Connect to the SSE proxy server spawned above using another instance of mcp-proxy given the URL of the SSE server
-mcp-proxy http://localhost:8080/sse
+mcp-proxy http://127.0.0.1:8080/sse
 
 # Send CTRL+C to stop the second server
 
