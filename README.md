@@ -19,6 +19,7 @@
     - [Installing via PyPI](#installing-via-pypi)
     - [Installing via Github repository (latest)](#installing-via-github-repository-latest)
     - [Installing as container](#installing-as-container)
+    - [Troubleshooting](#troubleshooting)
   - [Extending the container image](#extending-the-container-image)
   - [Docker Compose Setup](#docker-compose-setup)
   - [Command line arguments](#command-line-arguments)
@@ -181,6 +182,20 @@ Starting from version 0.3.2, it's possible to pull and run the corresponding con
 ```bash
 docker run -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
 ```
+
+### Troubleshooting
+
+- **Problem**: Claude Desktop can't start the server: ENOENT code in the logs
+
+  **Solution**: Try to use the full path to the binary. To do so, open a terminal and run the command `where mcp-proxy` (macOS, Linux) or `where.exe mcp-proxy` (Windows). Then, use the output path as a value for 'command' attribute:
+  ```json
+    "fetch": {
+      "command": "/full/path/to/bin/mcp-proxy",
+      "args": [
+        "http://localhost:8932/sse"
+      ]
+    }
+  ```
 
 ## Extending the container image
 
