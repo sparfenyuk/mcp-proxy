@@ -6,6 +6,17 @@
       "type": "python",
       "request": "test",
       "justMyCode": false
+    },
+    {
+      "name": "Debug mcp-proxy",
+      "type": "debugpy",
+      "request": "launch",
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "python": "${command:python.interpreterPath}",
+      "envFile": "${workspaceFolder}/.env",
+      "module": "mcp_proxy",
+      "args": ["--sse-port=8080", "--debug", "--", "uvx", "mcp-server-fetch"]
     }
   ]
 }

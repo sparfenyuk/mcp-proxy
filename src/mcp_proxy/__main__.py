@@ -18,7 +18,6 @@ from mcp.client.stdio import StdioServerParameters
 from .sse_client import run_sse_client
 from .sse_server import SseServerSettings, run_sse_server
 
-logging.basicConfig(level=logging.DEBUG)
 SSE_URL: t.Final[str | None] = os.getenv(
     "SSE_URL",
     None,
@@ -84,6 +83,12 @@ def main() -> None:
         help="Pass through all environment variables when spawning the server.",
         default=False,
     )
+    stdio_client_options.add_argument(
+        "--debug",
+        action=argparse.BooleanOptionalAction,
+        help="Enable debug mode with detailed logging output.",
+        default=False,
+    )
 
     sse_server_group = parser.add_argument_group("SSE server options")
     sse_server_group.add_argument(
@@ -110,13 +115,16 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
+    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
+    logger = logging.getLogger(__name__)
+
     if (
         SSE_URL
         or args.command_or_url.startswith("http://")
         or args.command_or_url.startswith("https://")
     ):
         # Start a client connected to the SSE server, and expose as a stdio server
-        logging.debug("Starting SSE client and stdio server")
+        logger.debug("Starting SSE client and stdio server")
         headers = dict(args.headers)
         if api_access_token := os.getenv("API_ACCESS_TOKEN", None):
             headers["Authorization"] = f"Bearer {api_access_token}"
@@ -124,7 +132,7 @@ def main() -> None:
         return
 
     # Start a client connected to the given command, and expose as an SSE server
-    logging.debug("Starting stdio client and SSE server")
+    logger.debug("Starting stdio client and SSE server")
 
     # The environment variables passed to the server process
     env: dict[str, str] = {}
@@ -143,6 +151,7 @@ def main() -> None:
         bind_host=args.sse_host,
         port=args.sse_port,
         allow_origins=args.allow_origin if len(args.allow_origin) > 0 else None,
+        log_level="DEBUG" if args.debug else "INFO",
     )
     asyncio.run(run_sse_server(stdio_params, sse_settings))
 

@@ -111,6 +111,20 @@ def server_can_list_resources(server: Server[object], resource: types.Resource) 
 
 
 @pytest.fixture
+def server_can_list_resource_templates(
+    server_can_list_resources: Server[object],
+    resource_template: types.ResourceTemplate,
+) -> Server[object]:
+    """Return a server instance with resources."""
+
+    @server_can_list_resources.list_resource_templates()  # type: ignore[no-untyped-call,misc]
+    async def _() -> list[types.ResourceTemplate]:
+        return [resource_template]
+
+    return server_can_list_resources
+
+
+@pytest.fixture
 def server_can_subscribe_resource(
     server_can_list_resources: Server[object],
     subscribe_callback: Callable[[AnyUrl], Awaitable[None]],
@@ -305,6 +319,39 @@ async def test_list_resources(
 
         list_resources_result = await session.list_resources()
         assert list_resources_result.resources == [resource]
+
+
+@pytest.mark.parametrize(
+    "resource",
+    [
+        types.Resource(
+            uri=AnyUrl("scheme://resource-uri"),
+            name="resource-name",
+            description="resource-description",
+        ),
+    ],
+)
+@pytest.mark.parametrize(
+    "resource_template",
+    [
+        types.ResourceTemplate(
+            uriTemplate="scheme://resource-uri/{resource}",
+            name="resource-name",
+            description="resource-description",
+        ),
+    ],
+)
+async def test_list_resource_templates(
+    session_generator: SessionContextManager,
+    server_can_list_resource_templates: Server[object],
+    resource_template: types.ResourceTemplate,
+) -> None:
+    """Test get_resource."""
+    async with session_generator(server_can_list_resource_templates) as session:
+        await session.initialize()
+
+        list_resources_result = await session.list_resource_templates()
+        assert list_resources_result.resourceTemplates == [resource_template]
 
 
 @pytest.mark.parametrize("prompt_callback", [AsyncMock()])

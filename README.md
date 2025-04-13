@@ -260,6 +260,7 @@ stdio client options:
                         Environment variables used when spawning the server. Can be used multiple times.
   --pass-environment, --no-pass-environment
                         Pass through all environment variables when spawning the server.
+  --debug, --no-debug   Enable debug mode with detailed logging output.
 
 SSE server options:
   --sse-port SSE_PORT   Port to expose an SSE server on. Default is a random port

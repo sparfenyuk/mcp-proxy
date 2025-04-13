@@ -1,5 +1,6 @@
 """Create a local SSE server that proxies requests to a stdio MCP server."""
 
+import logging
 from dataclasses import dataclass
 from typing import Literal
 
@@ -15,6 +16,8 @@ from starlette.requests import Request
 from starlette.routing import Mount, Route
 
 from .proxy_server import create_proxy_server
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -81,6 +84,7 @@ async def run_sse_server(
 
     """
     async with stdio_client(stdio_params) as streams, ClientSession(*streams) as session:
+        logger.debug("Starting proxy server...")
         mcp_server = await create_proxy_server(session)
 
         # Bind SSE request handling to MCP server
@@ -98,4 +102,9 @@ async def run_sse_server(
             log_level=sse_settings.log_level.lower(),
         )
         http_server = uvicorn.Server(config)
+        logger.debug(
+            "Serving incoming requests on %s:%s",
+            sse_settings.bind_host,
+            sse_settings.port,
+        )
         await http_server.serve()
