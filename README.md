@@ -6,6 +6,10 @@
 [![codecov](https://codecov.io/gh/sparfenyuk/mcp-proxy/graph/badge.svg?token=31VV9L7AZQ)](https://codecov.io/gh/sparfenyuk/mcp-proxy)
 [![smithery badge](https://smithery.ai/badge/mcp-proxy)](https://smithery.ai/server/mcp-proxy)
 
+<a href="https://glama.ai/mcp/servers/@sparfenyuk/mcp-proxy">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@sparfenyuk/mcp-proxy/badge" alt="Proxy Server MCP server" />
+</a>
+
 - [mcp-proxy](#mcp-proxy)
   - [About](#about)
   - [1. stdio to SSE](#1-stdio-to-sse)
