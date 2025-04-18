@@ -16,8 +16,63 @@ from starlette.requests import Request
 from starlette.routing import Mount, Route
 
 from .proxy_server import create_proxy_server
+import os
+from typing import Callable
 
 logger = logging.getLogger(__name__)
+
+
+class HeaderAuthMiddleware:
+    """Middleware to authenticate requests based on Authorization header."""
+
+    def __init__(
+        self,
+        app: Callable,
+        auth_token: str,
+        auth_scheme: str = "Bearer",
+    ):
+        """Initialize the middleware.
+
+        Args:
+            app: The ASGI application.
+            auth_token: The token to validate against.
+            auth_scheme: The authentication scheme (default: Bearer).
+        """
+        self.app = app
+        self.auth_token = auth_token
+        self.auth_scheme = auth_scheme
+
+    async def __call__(self, scope, receive, send):
+        """Process the request.
+
+        Args:
+            scope: The ASGI connection scope.
+            receive: The ASGI receive function.
+            send: The ASGI send function.
+        """
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = dict(scope.get("headers", []))
+        auth_header = headers.get(b"authorization", b"").decode("latin-1")
+        
+        expected = f"{self.auth_scheme} {self.auth_token}"
+        
+        if auth_header != expected:
+            # Return 401 Unauthorized
+            await send({
+                "type": "http.response.start",
+                "status": 401,
+                "headers": [(b"content-type", b"text/plain")],
+            })
+            await send({
+                "type": "http.response.body",
+                "body": b"Unauthorized",
+            })
+            return
+        
+        await self.app(scope, receive, send)
 
 
 @dataclass
@@ -27,6 +82,7 @@ class SseServerSettings:
     bind_host: str
     port: int
     allow_origins: list[str] | None = None
+    auth_token: str | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
@@ -34,9 +90,10 @@ def create_starlette_app(
     mcp_server: Server[object],
     *,
     allow_origins: list[str] | None = None,
+    auth_token: str | None = None,
     debug: bool = False,
 ) -> Starlette:
-    """Create a Starlette application that can server the provied mcp server with SSE."""
+    """Create a Starlette application with optional authentication."""
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request) -> None:
@@ -52,6 +109,10 @@ def create_starlette_app(
             )
 
     middleware: list[Middleware] = []
+    if auth_token:
+        middleware.append(
+            Middleware(HeaderAuthMiddleware, auth_token=auth_token)
+        )
     if allow_origins is not None:
         middleware.append(
             Middleware(
@@ -91,6 +152,7 @@ async def run_sse_server(
         starlette_app = create_starlette_app(
             mcp_server,
             allow_origins=sse_settings.allow_origins,
+            auth_token=sse_settings.auth_token,
             debug=(sse_settings.log_level == "DEBUG"),
         )
 
