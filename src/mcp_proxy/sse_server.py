@@ -62,7 +62,7 @@ def create_starlette_app(
     auth_token: str | None = None,
     debug: bool = False,
 ) -> Starlette:
-    """Create a Starlette application with optional authentication."""
+    """Create a Starlette application that can serve the provided mcp server with optional authentication."""
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request) -> None:
