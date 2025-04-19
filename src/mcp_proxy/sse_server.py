@@ -12,67 +12,36 @@ from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.requests import Request
 from starlette.routing import Mount, Route
 
 from .proxy_server import create_proxy_server
-import os
-from typing import Callable
+from starlette.authentication import (
+    AuthCredentials, AuthenticationBackend, AuthenticationError, SimpleUser
+)
 
 logger = logging.getLogger(__name__)
 
 
-class HeaderAuthMiddleware:
-    """Middleware to authenticate requests based on Authorization header."""
-
-    def __init__(
-        self,
-        app: Callable,
-        auth_token: str,
-        auth_scheme: str = "Bearer",
-    ):
-        """Initialize the middleware.
-
-        Args:
-            app: The ASGI application.
-            auth_token: The token to validate against.
-            auth_scheme: The authentication scheme (default: Bearer).
-        """
-        self.app = app
+class HeaderAuthBackend(AuthenticationBackend):
+    """Authentication backend to authenticate requests based on Authorization header."""
+    def __init__(self, auth_token: str):
         self.auth_token = auth_token
-        self.auth_scheme = auth_scheme
+        logger.debug("Using authentication token: %s", auth_token)
 
-    async def __call__(self, scope, receive, send):
-        """Process the request.
-
-        Args:
-            scope: The ASGI connection scope.
-            receive: The ASGI receive function.
-            send: The ASGI send function.
-        """
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        headers = dict(scope.get("headers", []))
-        auth_header = headers.get(b"authorization", b"").decode("latin-1")
+    async def authenticate(self, conn):
+        if "Authorization" not in conn.headers:
+            raise AuthenticationError('Invalid token')
         
-        expected = f"{self.auth_scheme} {self.auth_token}"
-        
-        if auth_header != expected:
-            # Return 401 Unauthorized
-            await send({
-                "type": "http.response.start",
-                "status": 401,
-                "headers": [(b"content-type", b"text/plain")],
-            })
-            await send({
-                "type": "http.response.body",
-                "body": b"Unauthorized",
-            })
-            return
-        
-        await self.app(scope, receive, send)
+        auth = conn.headers["Authorization"]
+        scheme, token = auth.split()
+        if scheme.lower() != "bearer":
+            raise AuthenticationError('Invalid token')
+        if token != self.auth_token:
+            raise AuthenticationError('Invalid token')
+        else:
+            return AuthCredentials(["authenticated"]), SimpleUser("user")
 
 
 @dataclass
@@ -97,6 +66,10 @@ def create_starlette_app(
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request) -> None:
+        # if request.user.is_authenticated:
+        print("auth_token: ", auth_token)
+        print(request.__dict__)
+        # logger.debug(request)
         async with sse.connect_sse(
             request.scope,
             request.receive,
@@ -109,10 +82,6 @@ def create_starlette_app(
             )
 
     middleware: list[Middleware] = []
-    if auth_token:
-        middleware.append(
-            Middleware(HeaderAuthMiddleware, auth_token=auth_token)
-        )
     if allow_origins is not None:
         middleware.append(
             Middleware(
@@ -120,7 +89,12 @@ def create_starlette_app(
                 allow_origins=allow_origins,
                 allow_methods=["*"],
                 allow_headers=["*"],
-            ),
+            )
+        )
+
+    if auth_token is not None:
+        middleware.append(
+            Middleware(AuthenticationMiddleware, backend=HeaderAuthBackend(auth_token=auth_token))
         )
 
     return Starlette(
