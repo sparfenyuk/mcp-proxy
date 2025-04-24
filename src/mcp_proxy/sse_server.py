@@ -28,7 +28,6 @@ class HeaderAuthBackend(AuthenticationBackend):
     """Authentication backend to authenticate requests based on Authorization header."""
     def __init__(self, auth_token: str):
         self.auth_token = auth_token
-        logger.debug("Using authentication token: %s", auth_token)
 
     async def authenticate(self, conn):
         if "Authorization" not in conn.headers:
@@ -66,10 +65,6 @@ def create_starlette_app(
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request) -> None:
-        # if request.user.is_authenticated:
-        print("auth_token: ", auth_token)
-        print(request.__dict__)
-        # logger.debug(request)
         async with sse.connect_sse(
             request.scope,
             request.receive,
