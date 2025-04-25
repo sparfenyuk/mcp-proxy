@@ -10,37 +10,42 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
+from starlette.authentication import (
+    AuthCredentials,
+    AuthenticationBackend,
+    AuthenticationError,
+    SimpleUser,
+)
 from starlette.middleware import Middleware
-from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.authentication import AuthenticationMiddleware
-from starlette.requests import Request, HTTPConnection
+from starlette.middleware.cors import CORSMiddleware
+from starlette.requests import HTTPConnection, Request
 from starlette.routing import Mount, Route
 
 from .proxy_server import create_proxy_server
-from starlette.authentication import (
-    AuthCredentials, AuthenticationBackend, AuthenticationError, SimpleUser
-)
 
 logger = logging.getLogger(__name__)
 
 
 class HeaderAuthBackend(AuthenticationBackend):
     """Authentication backend to authenticate requests based on Authorization header."""
-    def __init__(self, auth_token: str):
+
+    def __init__(self, auth_token: str) -> None:
+        """Initialize the authentication backend with the provided auth token."""
         self.auth_token = auth_token
 
     async def authenticate(self, conn: HTTPConnection) -> tuple[AuthCredentials, SimpleUser]:
+        """Authenticate the request based on the Authorization header."""
         if "Authorization" not in conn.headers:
-            raise AuthenticationError('Invalid token')
-        
+            raise AuthenticationError("Invalid token")
+
         auth = conn.headers["Authorization"]
         scheme, token = auth.split()
         if scheme.lower() != "bearer":
-            raise AuthenticationError('Invalid token')
+            raise AuthenticationError("Invalid token")
         if token != self.auth_token:
-            raise AuthenticationError('Invalid token')
-        else:
-            return AuthCredentials(["authenticated"]), SimpleUser("user")
+            raise AuthenticationError("Invalid token")
+        return AuthCredentials(["authenticated"]), SimpleUser("user")
 
 
 @dataclass
@@ -61,7 +66,7 @@ def create_starlette_app(
     auth_token: str | None = None,
     debug: bool = False,
 ) -> Starlette:
-    """Create a Starlette application that can serve the provided mcp server with optional authentication."""
+    """Create a Starlette application to serve the provided mcp server."""
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request) -> None:
@@ -84,12 +89,12 @@ def create_starlette_app(
                 allow_origins=allow_origins,
                 allow_methods=["*"],
                 allow_headers=["*"],
-            )
+            ),
         )
 
     if auth_token is not None:
         middleware.append(
-            Middleware(AuthenticationMiddleware, backend=HeaderAuthBackend(auth_token=auth_token))
+            Middleware(AuthenticationMiddleware, backend=HeaderAuthBackend(auth_token=auth_token)),
         )
 
     return Starlette(
