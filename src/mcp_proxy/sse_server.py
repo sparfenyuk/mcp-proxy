@@ -13,7 +13,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.authentication import AuthenticationMiddleware
-from starlette.requests import Request
+from starlette.requests import Request, HTTPConnection
 from starlette.routing import Mount, Route
 
 from .proxy_server import create_proxy_server
@@ -29,7 +29,7 @@ class HeaderAuthBackend(AuthenticationBackend):
     def __init__(self, auth_token: str):
         self.auth_token = auth_token
 
-    async def authenticate(self, conn):
+    async def authenticate(self, conn: HTTPConnection) -> tuple[AuthCredentials, SimpleUser]:
         if "Authorization" not in conn.headers:
             raise AuthenticationError('Invalid token')
         
