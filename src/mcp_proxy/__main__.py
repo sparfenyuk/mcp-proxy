@@ -108,7 +108,11 @@ def main() -> None:
         default=[],
         help="Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.",  # noqa: E501
     )
-
+    sse_server_group.add_argument(
+        "--auth-token",
+        default=None,
+        help="Authentication token for the SSE server. Default is no authentication.",
+    )
     args = parser.parse_args()
 
     if not args.command_or_url:
@@ -151,6 +155,7 @@ def main() -> None:
         bind_host=args.sse_host,
         port=args.sse_port,
         allow_origins=args.allow_origin if len(args.allow_origin) > 0 else None,
+        auth_token=args.auth_token,
         log_level="DEBUG" if args.debug else "INFO",
     )
     asyncio.run(run_sse_server(stdio_params, sse_settings))

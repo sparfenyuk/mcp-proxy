@@ -10,14 +10,42 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
+from starlette.authentication import (
+    AuthCredentials,
+    AuthenticationBackend,
+    AuthenticationError,
+    SimpleUser,
+)
 from starlette.middleware import Middleware
+from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request
+from starlette.requests import HTTPConnection, Request
 from starlette.routing import Mount, Route
 
 from .proxy_server import create_proxy_server
 
 logger = logging.getLogger(__name__)
+
+
+class HeaderAuthBackend(AuthenticationBackend):
+    """Authentication backend to authenticate requests based on Authorization header."""
+
+    def __init__(self, auth_token: str) -> None:
+        """Initialize the authentication backend with the provided auth token."""
+        self.auth_token = auth_token
+
+    async def authenticate(self, conn: HTTPConnection) -> tuple[AuthCredentials, SimpleUser]:
+        """Authenticate the request based on the Authorization header."""
+        if "Authorization" not in conn.headers:
+            raise AuthenticationError("Invalid token")
+
+        auth = conn.headers["Authorization"]
+        scheme, token = auth.split()
+        if scheme.lower() != "bearer":
+            raise AuthenticationError("Invalid token")
+        if token != self.auth_token:
+            raise AuthenticationError("Invalid token")
+        return AuthCredentials(["authenticated"]), SimpleUser("user")
 
 
 @dataclass
@@ -27,6 +55,7 @@ class SseServerSettings:
     bind_host: str
     port: int
     allow_origins: list[str] | None = None
+    auth_token: str | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
@@ -34,9 +63,10 @@ def create_starlette_app(
     mcp_server: Server[object],
     *,
     allow_origins: list[str] | None = None,
+    auth_token: str | None = None,
     debug: bool = False,
 ) -> Starlette:
-    """Create a Starlette application that can server the provied mcp server with SSE."""
+    """Create a Starlette application to serve the provided mcp server."""
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request) -> None:
@@ -60,6 +90,11 @@ def create_starlette_app(
                 allow_methods=["*"],
                 allow_headers=["*"],
             ),
+        )
+
+    if auth_token is not None:
+        middleware.append(
+            Middleware(AuthenticationMiddleware, backend=HeaderAuthBackend(auth_token=auth_token)),
         )
 
     return Starlette(
@@ -91,6 +126,7 @@ async def run_sse_server(
         starlette_app = create_starlette_app(
             mcp_server,
             allow_origins=sse_settings.allow_origins,
+            auth_token=sse_settings.auth_token,
             debug=(sse_settings.log_level == "DEBUG"),
         )
 
