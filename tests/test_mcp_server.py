@@ -2,15 +2,18 @@
 
 import asyncio
 import contextlib
+import logging
 import typing as t
 
+import pytest
 import uvicorn
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
+from mcp.client.streamableHttp import streamablehttp_client
 from mcp.server import Server
 
-from mcp_proxy.sse_server import create_starlette_app
+from mcp_proxy.mcp_server import create_starlette_app
 
 
 class BackgroundServer(uvicorn.Server):
@@ -40,6 +43,7 @@ class BackgroundServer(uvicorn.Server):
         return f"http://{hostport[0]}:{hostport[1]}"
 
 
+@pytest.mark.asyncio
 async def test_create_starlette_app() -> None:
     """Test basic glue code for the SSE transport and a fake MCP server."""
     mcp_server: Server[object] = Server("prompt-server")
@@ -53,9 +57,17 @@ async def test_create_starlette_app() -> None:
     config = uvicorn.Config(app, port=0, log_level="info")
     server = BackgroundServer(config)
     async with server.run_in_background():
-        mcp_url = f"{server.url}/sse"
-        async with sse_client(url=mcp_url) as streams, ClientSession(*streams) as session:
+        sse_url = f"{server.url}/sse"
+        async with sse_client(url=sse_url) as streams, ClientSession(*streams) as session:
             await session.initialize()
             response = await session.list_prompts()
             assert len(response.prompts) == 1
             assert response.prompts[0].name == "prompt1"
+
+        http_url = f"{server.url}/mcp/"
+        async with streamablehttp_client(url=http_url) as (read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                response = await session.list_prompts()
+                assert len(response.prompts) == 1
+                assert response.prompts[0].name == "prompt1"

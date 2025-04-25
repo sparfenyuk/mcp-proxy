@@ -16,7 +16,7 @@ import typing as t
 from mcp.client.stdio import StdioServerParameters
 
 from .sse_client import run_sse_client
-from .sse_server import SseServerSettings, run_sse_server
+from .mcp_server import MCPServerSettings, run_mcp_server
 
 SSE_URL: t.Final[str | None] = os.getenv(
     "SSE_URL",
@@ -34,9 +34,9 @@ def main() -> None:
             "Examples:\n"
             "  mcp-proxy http://localhost:8080/sse\n"
             "  mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse\n"
-            "  mcp-proxy --sse-port 8080 -- your-command --arg1 value1 --arg2 value2\n"
-            "  mcp-proxy your-command --sse-port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE\n"
-            "  mcp-proxy your-command --sse-port 8080 --allow-origin='*'\n"
+            "  mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2\n"
+            "  mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE\n"
+            "  mcp-proxy your-command --port 8080 --allow-origin='*'\n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -92,6 +92,17 @@ def main() -> None:
 
     sse_server_group = parser.add_argument_group("SSE server options")
     sse_server_group.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to expose an SSE server on. Default is a random port",
+    )
+    sse_server_group.add_argument(
+        "--host",
+        default=None,
+        help="Host to expose an SSE server on. Default is 127.0.0.1",
+    )
+    sse_server_group.add_argument(
         "--sse-port",
         type=int,
         default=0,
@@ -106,7 +117,8 @@ def main() -> None:
         "--allow-origin",
         nargs="+",
         default=[],
-        help="Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.",  # noqa: E501
+        help="Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.",
+        # noqa: E501
     )
 
     args = parser.parse_args()
@@ -119,9 +131,9 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     if (
-        SSE_URL
-        or args.command_or_url.startswith("http://")
-        or args.command_or_url.startswith("https://")
+            SSE_URL
+            or args.command_or_url.startswith("http://")
+            or args.command_or_url.startswith("https://")
     ):
         # Start a client connected to the SSE server, and expose as a stdio server
         logger.debug("Starting SSE client and stdio server")
@@ -147,13 +159,14 @@ def main() -> None:
         args=args.args,
         env=env,
     )
-    sse_settings = SseServerSettings(
-        bind_host=args.sse_host,
-        port=args.sse_port,
+
+    mcp_settings = MCPServerSettings(
+        bind_host=args.host if args.host is not None else args.sse_host,
+        port=args.port if args.port is not None else args.sse_port,
         allow_origins=args.allow_origin if len(args.allow_origin) > 0 else None,
         log_level="DEBUG" if args.debug else "INFO",
     )
-    asyncio.run(run_sse_server(stdio_params, sse_settings))
+    asyncio.run(run_mcp_server(stdio_params, mcp_settings))
 
 
 if __name__ == "__main__":

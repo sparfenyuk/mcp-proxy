@@ -7,36 +7,37 @@
 [![smithery badge](https://smithery.ai/badge/mcp-proxy)](https://smithery.ai/server/mcp-proxy)
 
 - [mcp-proxy](#mcp-proxy)
-  - [About](#about)
-  - [1. stdio to SSE](#1-stdio-to-sse)
-    - [1.1 Configuration](#11-configuration)
-    - [1.2 Example usage](#12-example-usage)
-  - [2. SSE to stdio](#2-sse-to-stdio)
-    - [2.1 Configuration](#21-configuration)
-    - [2.2 Example usage](#22-example-usage)
-  - [Installation](#installation)
-    - [Installing via Smithery](#installing-via-smithery)
-    - [Installing via PyPI](#installing-via-pypi)
-    - [Installing via Github repository (latest)](#installing-via-github-repository-latest)
-    - [Installing as container](#installing-as-container)
-    - [Troubleshooting](#troubleshooting)
-  - [Extending the container image](#extending-the-container-image)
-  - [Docker Compose Setup](#docker-compose-setup)
-  - [Command line arguments](#command-line-arguments)
-  - [Testing](#testing)
+    - [About](#about)
+    - [1. stdio to SSE/StreamableHttp](#1-stdio-to-sse)
+        - [1.1 Configuration](#11-configuration)
+        - [1.2 Example usage](#12-example-usage)
+    - [2. SSE to stdio](#2-sse-to-stdio)
+        - [2.1 Configuration](#21-configuration)
+        - [2.2 Example usage](#22-example-usage)
+    - [Installation](#installation)
+        - [Installing via Smithery](#installing-via-smithery)
+        - [Installing via PyPI](#installing-via-pypi)
+        - [Installing via Github repository (latest)](#installing-via-github-repository-latest)
+        - [Installing as container](#installing-as-container)
+        - [Troubleshooting](#troubleshooting)
+    - [Extending the container image](#extending-the-container-image)
+    - [Docker Compose Setup](#docker-compose-setup)
+    - [Command line arguments](#command-line-arguments)
+    - [Testing](#testing)
 
 ## About
 
 The `mcp-proxy` is a tool that lets you switch between server transports. There are two supported modes:
 
-1. stdio to SSE
+1. stdio to SSE/StreamableHTTP
 2. SSE to stdio
 
-## 1. stdio to SSE
+## 1. stdio to SSE/StreamableHTTP
 
 Run a proxy server from stdio that connects to a remote SSE server.
 
-This mode allows clients like Claude Desktop to communicate to a remote server over SSE even though it is not supported natively.
+This mode allows clients like Claude Desktop to communicate to a remote server over SSE even though it is not supported
+natively.
 
 ```mermaid
 graph LR
@@ -55,14 +56,14 @@ This mode requires passing the URL to the MCP Server SSE endpoint as the first a
 Arguments
 
 | Name             | Required | Description                                      | Example                                       |
-| ---------------- | -------- | ------------------------------------------------ | --------------------------------------------- |
+|------------------|----------|--------------------------------------------------|-----------------------------------------------|
 | `command_or_url` | Yes      | The MCP server SSE endpoint to connect to        | http://example.io/sse                         |
 | `--headers`      | No       | Headers to use for the MCP server SSE connection | Authorization 'Bearer my-secret-access-token' |
 
 Environment Variables
 
 | Name               | Required | Description                                                                  | Example    |
-| ------------------ | -------- | ---------------------------------------------------------------------------- | ---------- |
+|--------------------|----------|------------------------------------------------------------------------------|------------|
 | `API_ACCESS_TOKEN` | No       | Can be used instead of `--headers Authorization 'Bearer <API_ACCESS_TOKEN>'` | YOUR_TOKEN |
 
 ### 1.2 Example usage
@@ -75,11 +76,13 @@ For Claude Desktop, the configuration entry can look like this:
 {
   "mcpServers": {
     "mcp-proxy": {
-        "command": "mcp-proxy",
-        "args": ["http://example.io/sse"],
-        "env": {
-          "API_ACCESS_TOKEN": "access-token"
-        }
+      "command": "mcp-proxy",
+      "args": [
+        "http://example.io/sse"
+      ],
+      "env": {
+        "API_ACCESS_TOKEN": "access-token"
+      }
     }
   }
 }
@@ -89,7 +92,8 @@ For Claude Desktop, the configuration entry can look like this:
 
 Run a proxy server exposing a SSE server that connects to a local stdio server.
 
-This allows remote connections to the local stdio server. The `mcp-proxy` opens a port to listen for SSE requests, spawns a local stdio server that handles MCP requests.
+This allows remote connections to the local stdio server. The `mcp-proxy` opens a port to listen for SSE requests,
+spawns a local stdio server that handles MCP requests.
 
 ```mermaid
 graph LR
@@ -103,18 +107,23 @@ graph LR
 
 ### 2.1 Configuration
 
-This mode requires the `--sse-port` argument to be set. The `--sse-host` argument can be set to specify the host IP address that the SSE server will listen on. Additional environment variables can be passed to the local stdio server using the `--env` argument. The command line arguments for the local stdio server must be passed after the `--` separator.
+This mode requires the `--sse-port` argument to be set. The `--sse-host` argument can be set to specify the host IP
+address that the SSE server will listen on. Additional environment variables can be passed to the local stdio server
+using the `--env` argument. The command line arguments for the local stdio server must be passed after the `--`
+separator.
 
 Arguments
 
-| Name                 | Required                   | Description                                                      | Example               |
-| -------------------- | -------------------------- | ---------------------------------------------------------------- | --------------------- |
-| `command_or_url`     | Yes                        | The command to spawn the MCP stdio server                        | uvx mcp-server-fetch  |
-| `--sse-port`         | No, random available       | The SSE server port to listen on                                 | 8080                  |
-| `--sse-host`         | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on           | 0.0.0.0               |
-| `--env`              | No                         | Additional environment variables to pass to the MCP stdio server | FOO=BAR               |
-| `--pass-environment` | No                         | Pass through all environment variables when spawning the server  | --no-pass-environment |
-| `--allow-origin`     | No                         | Pass through all environment variables when spawning the server  | --allow-cors "\*"     |
+| Name                      | Required                   | Description                                                      | Example               |
+|---------------------------|----------------------------|------------------------------------------------------------------|-----------------------|
+| `command_or_url`          | Yes                        | The command to spawn the MCP stdio server                        | uvx mcp-server-fetch  |
+| `--port`                  | No, random available       | The MCP server port to listen on                                 | 8080                  |
+| `--host`                  | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on           | 0.0.0.0               |
+| `--env`                   | No                         | Additional environment variables to pass to the MCP stdio server | FOO=BAR               |
+| `--pass-environment`      | No                         | Pass through all environment variables when spawning the server  | --no-pass-environment |
+| `--allow-origin`          | No                         | Pass through all environment variables when spawning the server  | --allow-cors "\*"     |
+| `--sse-port` (deprecated) | No, random available       | The SSE server port to listen on                                 | 8080                  |
+| `--sse-host` (deprecated) | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on           | 0.0.0.0               |
 
 ### 2.2 Example usage
 
@@ -125,17 +134,20 @@ To start the `mcp-proxy` server that listens on port 8080 and connects to the lo
 mcp-proxy uvx mcp-server-fetch
 
 # Start the MCP server behind the proxy with a custom port
-mcp-proxy --sse-port=8080 uvx mcp-server-fetch
+# (deprecated) mcp-proxy --sse-port=8080 uvx mcp-server-fetch
+mcp-proxy --port=8080 uvx mcp-server-fetch
 
 # Start the MCP server behind the proxy with a custom host and port
-mcp-proxy --sse-host=0.0.0.0 --sse-port=8080 uvx mcp-server-fetch
+# (deprecated) mcp-proxy --sse-host=0.0.0.0 --sse-port=8080 uvx mcp-server-fetch
+mcp-proxy --host=0.0.0.0 --port=8080 uvx mcp-server-fetch
 
 # Start the MCP server behind the proxy with a custom user agent
 # Note that the `--` separator is used to separate the `mcp-proxy` arguments from the `mcp-server-fetch` arguments
-mcp-proxy --sse-port=8080 -- uvx mcp-server-fetch --user-agent=YourUserAgent
+# (deprecated) mcp-proxy --sse-port=8080 -- uvx mcp-server-fetch --user-agent=YourUserAgent
+mcp-proxy --port=8080 -- uvx mcp-server-fetch --user-agent=YourUserAgent
 ```
 
-This will start an MCP server that can be connected to at `http://127.0.0.1:8080/sse`
+This will start an MCP server that can be connected to at `http://127.0.0.1:8080/sse` via SSE, or `http://127.0.0.1:8080/mcp/` via StreamableHttp
 
 ## Installation
 
@@ -187,7 +199,8 @@ docker run -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
 
 - **Problem**: Claude Desktop can't start the server: ENOENT code in the logs
 
-  **Solution**: Try to use the full path to the binary. To do so, open a terminal and run the command `where mcp-proxy` (macOS, Linux) or `where.exe mcp-proxy` (Windows). Then, use the output path as a value for 'command' attribute:
+  **Solution**: Try to use the full path to the binary. To do so, open a terminal and run the command`where mcp-proxy` (
+  macOS, Linux) or `where.exe mcp-proxy` (Windows). Then, use the output path as a value for 'command' attribute:
   ```json
     "fetch": {
       "command": "/full/path/to/bin/mcp-proxy",
@@ -199,7 +212,8 @@ docker run -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
 
 ## Extending the container image
 
-You can extend the `mcp-proxy` container image to include additional executables. For instance, `uv` is not included by default, but you can create a custom image with it:
+You can extend the `mcp-proxy` container image to include additional executables. For instance, `uv` is not included by
+default, but you can create a custom image with it:
 
 ```Dockerfile
 # file: mcp-proxy.Dockerfile
@@ -229,11 +243,12 @@ services:
     restart: unless-stopped
     ports:
       - 8096:8096
-    command: "--pass-environment --sse-port=8096 --sse-host 0.0.0.0 uvx mcp-server-fetch"
+    command: "--pass-environment --port=8096 --sse-host 0.0.0.0 uvx mcp-server-fetch"
 ```
 
 > [!NOTE]
-> Don't forget to set `--pass-environment` argument, otherwise you'll end up with the error "No interpreter found in managed installations or search path"
+> Don't forget to set `--pass-environment` argument, otherwise you'll end up with the error "No interpreter found in
+> managed installations or search path"
 
 ## Command line arguments
 
@@ -263,26 +278,27 @@ stdio client options:
   --debug, --no-debug   Enable debug mode with detailed logging output.
 
 SSE server options:
-  --sse-port SSE_PORT   Port to expose an SSE server on. Default is a random port
-  --sse-host SSE_HOST   Host to expose an SSE server on. Default is 127.0.0.1
+  --port MCP_PORT   Port to expose an MCP server on. Default is a random port
+  --host MCP_HOST   Host to expose an MCP server on. Default is 127.0.0.1
   --allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]
                         Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.
 
 Examples:
   mcp-proxy http://localhost:8080/sse
   mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
-  mcp-proxy --sse-port 8080 -- your-command --arg1 value1 --arg2 value2
-  mcp-proxy your-command --sse-port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE
-  mcp-proxy your-command --sse-port 8080 --allow-origin='*'
+  mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2
+  mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE
+  mcp-proxy your-command --port 8080 --allow-origin='*'
 ```
 
 ## Testing
 
-Check the `mcp-proxy` server by running it with the `mcp-server-fetch` server. You can use the [inspector tool](https://modelcontextprotocol.io/docs/tools/inspector) to test the target server.
+Check the `mcp-proxy` server by running it with the `mcp-server-fetch` server. You can use
+the [inspector tool](https://modelcontextprotocol.io/docs/tools/inspector) to test the target server.
 
 ```bash
 # Run the stdio server called mcp-server-fetch behind the proxy over SSE
-mcp-proxy --sse-port=8080 uvx mcp-server-fetch &
+mcp-proxy --port=8080 uvx mcp-server-fetch &
 
 # Connect to the SSE proxy server spawned above using another instance of mcp-proxy given the URL of the SSE server
 mcp-proxy http://127.0.0.1:8080/sse
