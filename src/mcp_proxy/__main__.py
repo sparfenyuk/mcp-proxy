@@ -15,8 +15,8 @@ import typing as t
 
 from mcp.client.stdio import StdioServerParameters
 
-from .sse_client import run_sse_client
 from .mcp_server import MCPServerSettings, run_mcp_server
+from .sse_client import run_sse_client
 
 SSE_URL: t.Final[str | None] = os.getenv(
     "SSE_URL",
@@ -117,8 +117,8 @@ def main() -> None:
         "--allow-origin",
         nargs="+",
         default=[],
-        help="Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.",
-        # noqa: E501
+        help="Allowed origins for the SSE server. "
+        "Can be used multiple times. Default is no CORS allowed.",
     )
 
     args = parser.parse_args()
@@ -131,9 +131,9 @@ def main() -> None:
     logger = logging.getLogger(__name__)
 
     if (
-            SSE_URL
-            or args.command_or_url.startswith("http://")
-            or args.command_or_url.startswith("https://")
+        SSE_URL
+        or args.command_or_url.startswith("http://")
+        or args.command_or_url.startswith("https://")
     ):
         # Start a client connected to the SSE server, and expose as a stdio server
         logger.debug("Starting SSE client and stdio server")

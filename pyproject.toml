@@ -27,7 +27,10 @@ classifiers = [
 ]
 version = "0.5.1"
 requires-python = ">=3.10"
-dependencies = ["mcp>=1.5.0,<2", "uvicorn>=0.34.0"]
+dependencies = [
+    "mcp @ git+https://github.com/modelcontextprotocol/python-sdk.git@5d8eaf77be00dbd9b33a7fe1e38cb0da77e49401",
+    "uvicorn>=0.34.0"
+]
 
 [build-system]
 requires = ["setuptools"]

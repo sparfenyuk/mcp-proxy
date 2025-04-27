@@ -2,7 +2,6 @@
 
 import asyncio
 import contextlib
-import logging
 import typing as t
 
 import pytest
@@ -10,7 +9,7 @@ import uvicorn
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
-from mcp.client.streamableHttp import streamablehttp_client
+from mcp.client.streamable_http import streamablehttp_client
 from mcp.server import Server
 
 from mcp_proxy.mcp_server import create_starlette_app
@@ -65,9 +64,11 @@ async def test_create_starlette_app() -> None:
             assert response.prompts[0].name == "prompt1"
 
         http_url = f"{server.url}/mcp/"
-        async with streamablehttp_client(url=http_url) as (read, write, _):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                response = await session.list_prompts()
-                assert len(response.prompts) == 1
-                assert response.prompts[0].name == "prompt1"
+        async with (
+            streamablehttp_client(url=http_url) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            response = await session.list_prompts()
+            assert len(response.prompts) == 1
+            assert response.prompts[0].name == "prompt1"
