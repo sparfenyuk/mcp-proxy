@@ -127,7 +127,10 @@ def main() -> None:
         parser.print_help()
         sys.exit(1)
 
-    logging.basicConfig(level=logging.DEBUG if args.debug else logging.INFO)
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format="[%(levelname)1.1s %(asctime)s.%(msecs).03d %(name)s] %(message)s",
+    )
     logger = logging.getLogger(__name__)
 
     if (

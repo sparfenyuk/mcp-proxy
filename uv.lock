@@ -191,8 +191,8 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.7.1.dev9+5d8eaf7"
-source = { git = "https://github.com/modelcontextprotocol/python-sdk.git?rev=5d8eaf77be00dbd9b33a7fe1e38cb0da77e49401#5d8eaf77be00dbd9b33a7fe1e38cb0da77e49401" }
+version = "1.7.1.dev11+58c5e72"
+source = { git = "https://github.com/modelcontextprotocol/python-sdk.git?rev=58c5e7223c40b2ec682fd7674545e8ceadd7cb20#58c5e7223c40b2ec682fd7674545e8ceadd7cb20" }
 dependencies = [
     { name = "anyio" },
     { name = "httpx" },
@@ -224,7 +224,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp", git = "https://github.com/modelcontextprotocol/python-sdk.git?rev=5d8eaf77be00dbd9b33a7fe1e38cb0da77e49401" },
+    { name = "mcp", git = "https://github.com/modelcontextprotocol/python-sdk.git?rev=58c5e7223c40b2ec682fd7674545e8ceadd7cb20" },
     { name = "uvicorn", specifier = ">=0.34.0" },
 ]
 

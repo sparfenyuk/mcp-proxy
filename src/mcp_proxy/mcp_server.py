@@ -4,12 +4,14 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from http import HTTPStatus
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 import anyio
 import uvicorn
+from anyio.abc import TaskStatus
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.server import Server
@@ -19,7 +21,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 
@@ -60,19 +62,26 @@ class MCPServerSettings:
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
-def create_starlette_app(
+def create_starlette_app(  # noqa: C901, Refactor required for complexity
     mcp_server: Server[object],
     *,
     allow_origins: list[str] | None = None,
     debug: bool = False,
 ) -> Starlette:
-    """Create a Starlette application that can server the provied mcp server with SSE."""
-    sse = SseServerTransport("/messages/")
+    """Create a Starlette application that can serve the mcp server with SSE or Streamable http."""
+    # record the last activity of api
+    status = {
+        "api_last_activity": datetime.now(timezone.utc).isoformat(),
+    }
 
-    # We need to store the server instances between requests
-    server_instances = {}
-    # Lock to prevent race conditions when creating new sessions
-    session_creation_lock = anyio.Lock()
+    def _update_mcp_activity() -> None:
+        status.update(
+            {
+                "api_last_activity": datetime.now(timezone.utc).isoformat(),
+            },
+        )
+
+    sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request) -> None:
         async with sse.connect_sse(
@@ -80,6 +89,8 @@ def create_starlette_app(
             request.receive,
             request._send,  # noqa: SLF001
         ) as (read_stream, write_stream):
+            _update_mcp_activity()
+
             await mcp_server.run(
                 read_stream,
                 write_stream,
@@ -87,7 +98,13 @@ def create_starlette_app(
             )
 
     # Refer: https://github.com/modelcontextprotocol/python-sdk/blob/5d8eaf77be00dbd9b33a7fe1e38cb0da77e49401/examples/servers/simple-streamablehttp/mcp_simple_streamablehttp/server.py
+    # We need to store the server instances between requests
+    server_instances: dict[str, Any] = {}
+    # Lock to prevent race conditions when creating new sessions
+    session_creation_lock = anyio.Lock()
+
     async def handle_streamable_http(scope: Scope, receive: Receive, send: Send) -> None:
+        _update_mcp_activity()
         request = Request(scope, receive)
         request_mcp_session_id = request.headers.get(MCP_SESSION_ID_HEADER)
         if request_mcp_session_id is not None and request_mcp_session_id in server_instances:
@@ -104,10 +121,10 @@ def create_starlette_app(
                     mcp_session_id=new_session_id,
                     is_json_response_enabled=True,
                 )
-                server_instances[http_transport.mcp_session_id] = http_transport
+                server_instances[new_session_id] = http_transport
                 logger.info("Created new transport with session ID: %s", new_session_id)
 
-                async def run_server(task_status=None) -> None:  # noqa: ANN001
+                async def run_server(task_status: TaskStatus[Any] | None = None) -> None:
                     async with http_transport.connect() as streams:
                         read_stream, write_stream = streams
                         if task_status:
@@ -132,6 +149,16 @@ def create_starlette_app(
             )
             await response(scope, receive, send)
 
+    async def handle_status(_: Request) -> Response:
+        """Health check and service usage monitoring endpoint.
+
+        Purpose of this handler:
+        - Provides a dedicated API endpoint for external health checks.
+        - Returns last API activity timestamp to monitor service usage patterns and uptime.
+        - Serves as basic infrastructure for potential future service metrics expansion.
+        """
+        return JSONResponse(status)
+
     middleware: list[Middleware] = []
     if allow_origins is not None:
         middleware.append(
@@ -147,6 +174,7 @@ def create_starlette_app(
         debug=debug,
         middleware=middleware,
         routes=[
+            Route("/status", endpoint=handle_status),
             Mount("/mcp", app=handle_streamable_http),
             Route("/sse", endpoint=handle_sse),
             Mount("/messages/", app=sse.handle_post_message),
