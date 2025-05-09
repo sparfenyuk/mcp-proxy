@@ -28,7 +28,7 @@ classifiers = [
 version = "0.5.1"
 requires-python = ">=3.10"
 dependencies = [
-    "mcp @ git+https://github.com/modelcontextprotocol/python-sdk.git@58c5e7223c40b2ec682fd7674545e8ceadd7cb20",
+    "mcp>=1.8.0,<2.0.0",
     "uvicorn>=0.34.0"
 ]
 

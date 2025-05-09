@@ -191,8 +191,8 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.7.1.dev11+58c5e72"
-source = { git = "https://github.com/modelcontextprotocol/python-sdk.git?rev=58c5e7223c40b2ec682fd7674545e8ceadd7cb20#58c5e7223c40b2ec682fd7674545e8ceadd7cb20" }
+version = "1.8.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "httpx" },
@@ -203,6 +203,10 @@ dependencies = [
     { name = "sse-starlette" },
     { name = "starlette" },
     { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ff/97/0a3e08559557b0ac5799f9fb535fbe5a4e4dcdd66ce9d32e7a74b4d0534d/mcp-1.8.0.tar.gz", hash = "sha256:263dfb700540b726c093f0c3e043f66aded0730d0b51f04eb0a3eb90055fe49b", size = 264641, upload_time = "2025-05-08T20:09:06.255Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/b2/4ac3bd17b1fdd65658f18de4eb0c703517ee0b483dc5f56467802a9197e0/mcp-1.8.0-py3-none-any.whl", hash = "sha256:889d9d3b4f12b7da59e7a3933a0acadae1fce498bfcd220defb590aa291a1334", size = 119544, upload_time = "2025-05-08T20:09:04.458Z" },
 ]
 
 [[package]]
@@ -224,7 +228,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp", git = "https://github.com/modelcontextprotocol/python-sdk.git?rev=58c5e7223c40b2ec682fd7674545e8ceadd7cb20" },
+    { name = "mcp", specifier = ">=1.8.0,<2.0.0" },
     { name = "uvicorn", specifier = ">=0.34.0" },
 ]
 
