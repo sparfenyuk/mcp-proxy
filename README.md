@@ -120,6 +120,7 @@ Arguments
 | `--port`                  | No, random available       | The MCP server port to listen on                                                            | 8080                  |
 | `--host`                  | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on                                      | 0.0.0.0               |
 | `--env`                   | No                         | Additional environment variables to pass to the MCP stdio server                            | FOO=BAR               |
+| `--cwd`                   | No                         | The working directory to pass to the MCP stdio server process.                              | /tmp                  |
 | `--pass-environment`      | No                         | Pass through all environment variables when spawning the server                             | --no-pass-environment |
 | `--allow-origin`          | No                         | Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed. | --allow-cors "\*"     |
 | `--stateless`             | No                         | Enable stateless mode for streamable http transports. Default is False                      | --no-stateless        |

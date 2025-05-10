@@ -78,6 +78,11 @@ def main() -> None:
         default=[],
     )
     stdio_client_options.add_argument(
+        "--cwd",
+        default=None,
+        help="The working directory to use when spawning the process.",
+    )
+    stdio_client_options.add_argument(
         "--pass-environment",
         action=argparse.BooleanOptionalAction,
         help="Pass through all environment variables when spawning the server.",
@@ -167,6 +172,7 @@ def main() -> None:
         command=args.command_or_url,
         args=args.args,
         env=env,
+        cwd=args.cwd if args.cwd else None,
     )
 
     mcp_settings = MCPServerSettings(
