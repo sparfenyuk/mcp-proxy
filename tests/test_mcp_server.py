@@ -6,11 +6,11 @@ import typing as t
 
 import pytest
 import uvicorn
-from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.server import Server
+from mcp.server import FastMCP
+from mcp.types import TextContent
 
 from mcp_proxy.mcp_server import create_starlette_app
 
@@ -42,19 +42,32 @@ class BackgroundServer(uvicorn.Server):
         return f"http://{hostport[0]}:{hostport[1]}"
 
 
-@pytest.mark.asyncio
-async def test_create_starlette_app() -> None:
-    """Test basic glue code for the SSE transport and a fake MCP server."""
-    mcp_server: Server[object] = Server("prompt-server")
+def make_background_server(**kwargs) -> BackgroundServer:  # noqa: ANN003
+    """Create a BackgroundServer instance with specified parameters."""
+    mcp = FastMCP("TestServer")
 
-    @mcp_server.list_prompts()  # type: ignore[no-untyped-call,misc]
-    async def list_prompts() -> list[types.Prompt]:
-        return [types.Prompt(name="prompt1")]
+    @mcp.prompt(name="prompt1")
+    async def list_prompts() -> str:
+        return "hello world"
 
-    app = create_starlette_app(mcp_server, allow_origins=["*"])
+    @mcp.tool(name="echo")
+    async def call_tool(message: str) -> str:
+        return f"Echo: {message}"
+
+    app = create_starlette_app(
+        mcp._mcp_server,  # noqa: SLF001
+        allow_origins=["*"],
+        **kwargs,
+    )
 
     config = uvicorn.Config(app, port=0, log_level="info")
-    server = BackgroundServer(config)
+    return BackgroundServer(config)
+
+
+@pytest.mark.asyncio
+async def test_sse_transport() -> None:
+    """Test basic glue code for the SSE transport and a fake MCP server."""
+    server = make_background_server(debug=True)
     async with server.run_in_background():
         sse_url = f"{server.url}/sse"
         async with sse_client(url=sse_url) as streams, ClientSession(*streams) as session:
@@ -63,6 +76,12 @@ async def test_create_starlette_app() -> None:
             assert len(response.prompts) == 1
             assert response.prompts[0].name == "prompt1"
 
+
+@pytest.mark.asyncio
+async def test_http_transport() -> None:
+    """Test HTTP transport layer functionality."""
+    server = make_background_server(debug=True)
+    async with server.run_in_background():
         http_url = f"{server.url}/mcp/"
         async with (
             streamablehttp_client(url=http_url) as (read, write, _),
@@ -72,3 +91,30 @@ async def test_create_starlette_app() -> None:
             response = await session.list_prompts()
             assert len(response.prompts) == 1
             assert response.prompts[0].name == "prompt1"
+
+            for i in range(3):
+                tool_result = await session.call_tool("echo", {"message": f"test_{i}"})
+                assert len(tool_result.content) == 1
+                assert isinstance(tool_result.content[0], TextContent)
+                assert tool_result.content[0].text == f"Echo: test_{i}"
+
+
+async def test_stateless_http_transport() -> None:
+    """Test stateless HTTP transport functionality."""
+    server = make_background_server(debug=True, stateless=True)
+    async with server.run_in_background():
+        http_url = f"{server.url}/mcp/"
+        async with (
+            streamablehttp_client(url=http_url) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            response = await session.list_prompts()
+            assert len(response.prompts) == 1
+            assert response.prompts[0].name == "prompt1"
+
+            for i in range(3):
+                tool_result = await session.call_tool("echo", {"message": f"test_{i}"})
+                assert len(tool_result.content) == 1
+                assert isinstance(tool_result.content[0], TextContent)
+                assert tool_result.content[0].text == f"Echo: test_{i}"

@@ -114,16 +114,17 @@ separator.
 
 Arguments
 
-| Name                      | Required                   | Description                                                      | Example               |
-|---------------------------|----------------------------|------------------------------------------------------------------|-----------------------|
-| `command_or_url`          | Yes                        | The command to spawn the MCP stdio server                        | uvx mcp-server-fetch  |
-| `--port`                  | No, random available       | The MCP server port to listen on                                 | 8080                  |
-| `--host`                  | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on           | 0.0.0.0               |
-| `--env`                   | No                         | Additional environment variables to pass to the MCP stdio server | FOO=BAR               |
-| `--pass-environment`      | No                         | Pass through all environment variables when spawning the server  | --no-pass-environment |
-| `--allow-origin`          | No                         | Pass through all environment variables when spawning the server  | --allow-cors "\*"     |
-| `--sse-port` (deprecated) | No, random available       | The SSE server port to listen on                                 | 8080                  |
-| `--sse-host` (deprecated) | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on           | 0.0.0.0               |
+| Name                      | Required                   | Description                                                                                 | Example               |
+|---------------------------|----------------------------|---------------------------------------------------------------------------------------------|-----------------------|
+| `command_or_url`          | Yes                        | The command to spawn the MCP stdio server                                                   | uvx mcp-server-fetch  |
+| `--port`                  | No, random available       | The MCP server port to listen on                                                            | 8080                  |
+| `--host`                  | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on                                      | 0.0.0.0               |
+| `--env`                   | No                         | Additional environment variables to pass to the MCP stdio server                            | FOO=BAR               |
+| `--pass-environment`      | No                         | Pass through all environment variables when spawning the server                             | --no-pass-environment |
+| `--allow-origin`          | No                         | Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed. | --allow-cors "\*"     |
+| `--stateless`             | No                         | Enable stateless mode for streamable http transports. Default is False                      | --no-stateless        |
+| `--sse-port` (deprecated) | No, random available       | The SSE server port to listen on                                                            | 8080                  |
+| `--sse-host` (deprecated) | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on                                      | 0.0.0.0               |
 
 ### 2.2 Example usage
 
@@ -147,7 +148,8 @@ mcp-proxy --host=0.0.0.0 --port=8080 uvx mcp-server-fetch
 mcp-proxy --port=8080 -- uvx mcp-server-fetch --user-agent=YourUserAgent
 ```
 
-This will start an MCP server that can be connected to at `http://127.0.0.1:8080/sse` via SSE, or `http://127.0.0.1:8080/mcp/` via StreamableHttp
+This will start an MCP server that can be connected to at `http://127.0.0.1:8080/sse` via SSE, or
+`http://127.0.0.1:8080/mcp/` via StreamableHttp
 
 ## Installation
 
