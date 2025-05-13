@@ -18,6 +18,7 @@ from mcp.client.stdio import StdioServerParameters
 from .mcp_server import MCPServerSettings, run_mcp_server
 from .sse_client import run_sse_client
 
+# Deprecated env var. Here for backwards compatibility.
 SSE_URL: t.Final[str | None] = os.getenv(
     "SSE_URL",
     None,
@@ -117,12 +118,12 @@ def main() -> None:
         "--sse-port",
         type=int,
         default=0,
-        help="Port to expose an SSE server on. Default is a random port",
+        help="(deprecated) Same as --port",
     )
     mcp_server_group.add_argument(
         "--sse-host",
         default="127.0.0.1",
-        help="Host to expose an SSE server on. Default is 127.0.0.1",
+        help="(deprecated) Same as --host",
     )
     mcp_server_group.add_argument(
         "--allow-origin",

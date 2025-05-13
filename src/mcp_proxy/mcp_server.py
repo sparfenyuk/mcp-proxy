@@ -45,6 +45,7 @@ def create_starlette_app(
     debug: bool = False,
 ) -> Starlette:
     """Create a Starlette application that can serve the mcp server with SSE or Streamable http."""
+    logger.debug("Creating Starlette app with stateless: %s and debug: %s", stateless, debug)
     # record the last activity of api
     status = {
         "api_last_activity": datetime.now(timezone.utc).isoformat(),
@@ -147,6 +148,7 @@ async def run_mcp_server(
         # Bind request handling to MCP server
         starlette_app = create_starlette_app(
             mcp_server,
+            stateless=mcp_settings.stateless,
             allow_origins=mcp_settings.allow_origins,
             debug=(mcp_settings.log_level == "DEBUG"),
         )

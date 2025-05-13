@@ -256,7 +256,8 @@ services:
 ## Command line arguments
 
 ```bash
-usage: mcp-proxy [-h] [-H KEY VALUE] [-e KEY VALUE] [--pass-environment | --no-pass-environment] [--sse-port SSE_PORT] [--sse-host SSE_HOST]
+usage: mcp-proxy [-h] [-H KEY VALUE] [-e KEY VALUE] [--cwd CWD] [--pass-environment | --no-pass-environment] [--debug | --no-debug] [--port PORT]
+                 [--host HOST] [--stateless | --no-stateless] [--sse-port SSE_PORT] [--sse-host SSE_HOST]
                  [--allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]]
                  [command_or_url] [args ...]
 
@@ -269,20 +270,24 @@ options:
   -h, --help            show this help message and exit
 
 SSE client options:
-  -H KEY VALUE, --headers KEY VALUE
+  -H, --headers KEY VALUE
                         Headers to pass to the SSE server. Can be used multiple times.
 
 stdio client options:
   args                  Any extra arguments to the command to spawn the server
-  -e KEY VALUE, --env KEY VALUE
-                        Environment variables used when spawning the server. Can be used multiple times.
+  -e, --env KEY VALUE   Environment variables used when spawning the server. Can be used multiple times.
+  --cwd CWD             The working directory to use when spawning the process.
   --pass-environment, --no-pass-environment
                         Pass through all environment variables when spawning the server.
   --debug, --no-debug   Enable debug mode with detailed logging output.
 
 SSE server options:
-  --port MCP_PORT   Port to expose an MCP server on. Default is a random port
-  --host MCP_HOST   Host to expose an MCP server on. Default is 127.0.0.1
+  --port PORT           Port to expose an SSE server on. Default is a random port
+  --host HOST           Host to expose an SSE server on. Default is 127.0.0.1
+  --stateless, --no-stateless
+                        Enable stateless mode for streamable http transports. Default is False
+  --sse-port SSE_PORT   (deprecated) Same as --port
+  --sse-host SSE_HOST   (deprecated) Same as --host
   --allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]
                         Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.
 
