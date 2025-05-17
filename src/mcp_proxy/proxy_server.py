@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 async def create_proxy_server(remote_app: ClientSession) -> server.Server[object]:  # noqa: C901, PLR0915
     """Create a server instance from a remote app."""
-    logger.debug("Sending initalization request to remote MCP server...")
+    logger.debug("Sending initialization request to remote MCP server...")
     response = await remote_app.initialize()
     capabilities = response.capabilities
 
