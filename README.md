@@ -14,6 +14,7 @@
   - [2. SSE to stdio](#2-sse-to-stdio)
     - [2.1 Configuration](#21-configuration)
     - [2.2 Example usage](#22-example-usage)
+  - [Named Servers](#named-servers)
   - [Installation](#installation)
     - [Installing via Smithery](#installing-via-smithery)
     - [Installing via PyPI](#installing-via-pypi)
@@ -115,20 +116,20 @@ separator.
 
 Arguments
 
-| Name                      | Required                   | Description                                                                                 | Example               |
-|---------------------------|----------------------------|---------------------------------------------------------------------------------------------|-----------------------|
-| `command_or_url`          | Yes                        | The command to spawn the MCP stdio server                                                   | uvx mcp-server-fetch  |
-| `--port`                  | No, random available       | The MCP server port to listen on                                                            | 8080                  |
-| `--host`                  | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on                                      | 0.0.0.0               |
-| `--env`                   | No                         | Additional environment variables to pass to the MCP stdio server                            | FOO=BAR               |
-| `--cwd`                   | No                         | The working directory to pass to the MCP stdio server process.                              | /tmp                  |
-| `--pass-environment`      | No                         | Pass through all environment variables when spawning the server                             | --no-pass-environment |
-| `--allow-origin`          | No                         | Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed. | --allow-cors "\*"     |
-| `--stateless`             | No                         | Enable stateless mode for streamable http transports. Default is False                      | --no-stateless        |
-| `--named-server NAME COMMAND_STRING` | No            | Defines a named stdio server. `NAME` is used in the URL path `/servers/NAME/`. `COMMAND_STRING` is the command to start the server (e.g., 'uvx mcp-server-fetch'). Can be used multiple times. This argument is ignored if `--named-server-config` is used. | --named-server myfetch 'uvx mcp-server-fetch' |
-| `--named-server-config FILE_PATH` | No           | Path to a JSON file defining named stdio servers. If provided, this is the exclusive source for named servers, and `--named-server` CLI arguments are ignored. See format below. | --named-server-config /path/to/servers.json |
-| `--sse-port` (deprecated) | No, random available       | The SSE server port to listen on                                                            | 8080                  |
-| `--sse-host` (deprecated) | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on                                      | 0.0.0.0               |
+| Name                                 | Required                   | Description                                                                                 | Example                                     |
+|--------------------------------------|----------------------------|---------------------------------------------------------------------------------------------|---------------------------------------------|
+| `command_or_url`                     | Yes                        | The command to spawn the MCP stdio server                                                   | uvx mcp-server-fetch                        |
+| `--port`                             | No, random available       | The MCP server port to listen on                                                            | 8080                                        |
+| `--host`                             | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on                                      | 0.0.0.0                                     |
+| `--env`                              | No                         | Additional environment variables to pass to the MCP stdio server                            | FOO=BAR                                     |
+| `--cwd`                              | No                         | The working directory to pass to the MCP stdio server process.                              | /tmp                                        |
+| `--pass-environment`                 | No                         | Pass through all environment variables when spawning the server                             | --no-pass-environment                       |
+| `--allow-origin`                     | No                         | Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed. | --allow-cors "\*"                           |
+| `--stateless`                        | No                         | Enable stateless mode for streamable http transports. Default is False                      | --no-stateless                              |
+| `--named-server NAME COMMAND_STRING` | No                         | Defines a named stdio server.                                                               | --named-server fetch 'uvx mcp-server-fetch' |
+| `--named-server-config FILE_PATH`    | No                         | Path to a JSON file defining named stdio servers.                                           | --named-server-config /path/to/servers.json |
+| `--sse-port` (deprecated)            | No, random available       | The SSE server port to listen on                                                            | 8080                                        |
+| `--sse-host` (deprecated)            | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on                                      | 0.0.0.0                                     |
 
 ### 2.2 Example usage
 
@@ -158,7 +159,16 @@ mcp-proxy --port=8080 --named-server fetch 'uvx mcp-server-fetch' --named-server
 mcp-proxy --port=8080 --named-server-config ./servers.json
 ```
 
+## Named Servers
+
+- `NAME` is used in the URL path `/servers/NAME/`.
+- `COMMAND_STRING` is the command to start the server (e.g., 'uvx mcp-server-fetch').
+  - Can be used multiple times.
+  - This argument is ignored if `--named-server-config` is used.
+- `FILE_PATH` - If provided, this is the exclusive source for named servers, and `--named-server` CLI arguments are ignored.
+
 If a default server is specified (the `command_or_url` argument without `--named-server` or `--named-server-config`), it will be accessible at the root paths (e.g., `http://127.0.0.1:8080/sse`).
+
 Named servers (whether defined by `--named-server` or `--named-server-config`) will be accessible under `/servers/<server-name>/` (e.g., `http://127.0.0.1:8080/servers/fetch1/sse`).
 The `/status` endpoint provides global status.
 
