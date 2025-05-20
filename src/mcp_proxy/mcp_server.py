@@ -98,7 +98,7 @@ def create_single_instance_routes(
     """Create Starlette routes and the HTTP session manager for a single MCP server instance."""
     logger.debug("Creating routes for a single MCP server instance (stateless: %s)", stateless_instance)
 
-    sse_transport = SseServerTransport("/messages/")
+    sse_transport = SseServerTransport("messages/")
     http_session_manager = StreamableHTTPSessionManager(
         app=mcp_server_instance,
         event_store=None,
