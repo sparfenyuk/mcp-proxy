@@ -5,7 +5,7 @@ import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Literal
 
 import uvicorn
 from mcp.client.session import ClientSession
@@ -25,6 +25,7 @@ from .proxy_server import create_proxy_server
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class MCPServerSettings:
     """Settings for the MCP server."""
@@ -35,68 +36,33 @@ class MCPServerSettings:
     allow_origins: list[str] | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
+
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
 _global_status = {
     "api_last_activity": datetime.now(timezone.utc).isoformat(),
-    "server_instances": {}, # Could be used to store per-instance status later
+    "server_instances": {},  # Could be used to store per-instance status later
 }
+
 
 def _update_global_activity() -> None:
     _global_status["api_last_activity"] = datetime.now(timezone.utc).isoformat()
+
 
 async def _handle_status(_: Request) -> Response:
     """Global health check and service usage monitoring endpoint."""
     return JSONResponse(_global_status)
 
-def create_starlette_app(
-    mcp_server: MCPServerSDK[Any],
-    allow_origins: list[str] | None = None,
-    debug: bool = False,
-    stateless: bool = False,
-) -> Starlette:
-    """Create a Starlette application for the MCP server.
-
-    Args:
-        mcp_server: The MCP server instance to wrap
-        allow_origins: List of allowed CORS origins
-        debug: Enable debug mode
-        stateless: Whether to use stateless HTTP sessions
-
-    Returns:
-        Starlette application instance
-    """
-    routes, http_manager = create_single_instance_routes(mcp_server, stateless)
-
-    middleware: list[Middleware] = []
-    if allow_origins:
-        middleware.append(
-            Middleware(
-                CORSMiddleware,
-                allow_origins=allow_origins,
-                allow_methods=["*"],
-                allow_headers=["*"],
-            ),
-        )
-
-    @contextlib.asynccontextmanager
-    async def lifespan(_app: Starlette) -> AsyncIterator[None]:
-        async with http_manager.run():
-            yield
-
-    return Starlette(
-        debug=debug,
-        routes=routes,
-        middleware=middleware,
-        lifespan=lifespan,
-    )
-
 
 def create_single_instance_routes(
     mcp_server_instance: MCPServerSDK[object],
+    *,
     stateless_instance: bool,
-) -> tuple[list[Route | Mount], StreamableHTTPSessionManager]: # Return the manager itself
+) -> tuple[list[Route | Mount], StreamableHTTPSessionManager]:  # Return the manager itself
     """Create Starlette routes and the HTTP session manager for a single MCP server instance."""
-    logger.debug("Creating routes for a single MCP server instance (stateless: %s)", stateless_instance)
+    logger.debug(
+        "Creating routes for a single MCP server instance (stateless: %s)",
+        stateless_instance,
+    )
 
     sse_transport = SseServerTransport("messages/")
     http_session_manager = StreamableHTTPSessionManager(
@@ -130,6 +96,7 @@ def create_single_instance_routes(
     ]
     return routes, http_session_manager
 
+
 async def run_mcp_server(
     mcp_settings: MCPServerSettings,
     default_server_params: StdioServerParameters | None = None,
@@ -140,7 +107,7 @@ async def run_mcp_server(
         named_server_params = {}
 
     all_routes: list[Route | Mount] = [
-        Route("/status", endpoint=_handle_status), # Global status endpoint
+        Route("/status", endpoint=_handle_status),  # Global status endpoint
     ]
     # Use AsyncExitStack to manage lifecycles of multiple components
     async with contextlib.AsyncExitStack() as stack:
@@ -154,25 +121,42 @@ async def run_mcp_server(
 
         # Setup default server if configured
         if default_server_params:
-            logger.info(f"Setting up default server: {default_server_params.command} {' '.join(default_server_params.args)}")
+            logger.info(
+                "Setting up default server: %s %s",
+                default_server_params.command,
+                " ".join(default_server_params.args),
+            )
             stdio_streams = await stack.enter_async_context(stdio_client(default_server_params))
             session = await stack.enter_async_context(ClientSession(*stdio_streams))
             proxy = await create_proxy_server(session)
 
-            instance_routes, http_manager = create_single_instance_routes(proxy, mcp_settings.stateless)
-            await stack.enter_async_context(http_manager.run()) # Manage lifespan by calling run()
+            instance_routes, http_manager = create_single_instance_routes(
+                proxy,
+                stateless_instance=mcp_settings.stateless,
+            )
+            await stack.enter_async_context(http_manager.run())  # Manage lifespan by calling run()
             all_routes.extend(instance_routes)
             _global_status["server_instances"]["default"] = "configured"
 
         # Setup named servers
         for name, params in named_server_params.items():
-            logger.info(f"Setting up named server '{name}': {params.command} {' '.join(params.args)}")
+            logger.info(
+                "Setting up named server '%s': %s %s",
+                name,
+                params.command,
+                " ".join(params.args),
+            )
             stdio_streams_named = await stack.enter_async_context(stdio_client(params))
             session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
             proxy_named = await create_proxy_server(session_named)
 
-            instance_routes_named, http_manager_named = create_single_instance_routes(proxy_named, mcp_settings.stateless)
-            await stack.enter_async_context(http_manager_named.run()) # Manage lifespan by calling run()
+            instance_routes_named, http_manager_named = create_single_instance_routes(
+                proxy_named,
+                stateless_instance=mcp_settings.stateless,
+            )
+            await stack.enter_async_context(
+                http_manager_named.run(),
+            )  # Manage lifespan by calling run()
 
             # Mount these routes under /servers/<name>/
             server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)

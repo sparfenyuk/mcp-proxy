@@ -9,10 +9,57 @@ import uvicorn
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.server import FastMCP
+from mcp.server import FastMCP, Server
 from mcp.types import TextContent
+from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.cors import CORSMiddleware
 
-from mcp_proxy.mcp_server import create_starlette_app
+from mcp_proxy.mcp_server import create_single_instance_routes
+
+
+def create_starlette_app(
+    mcp_server: Server[t.Any],
+    allow_origins: list[str] | None = None,
+    *,
+    debug: bool = False,
+    stateless: bool = False,
+) -> Starlette:
+    """Create a Starlette application for the MCP server.
+
+    Args:
+        mcp_server: The MCP server instance to wrap
+        allow_origins: List of allowed CORS origins
+        debug: Enable debug mode
+        stateless: Whether to use stateless HTTP sessions
+
+    Returns:
+        Starlette application instance
+    """
+    routes, http_manager = create_single_instance_routes(mcp_server, stateless_instance=stateless)
+
+    middleware: list[Middleware] = []
+    if allow_origins:
+        middleware.append(
+            Middleware(
+                CORSMiddleware,
+                allow_origins=allow_origins,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            ),
+        )
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: Starlette) -> t.AsyncIterator[None]:
+        async with http_manager.run():
+            yield
+
+    return Starlette(
+        debug=debug,
+        routes=routes,
+        middleware=middleware,
+        lifespan=lifespan,
+    )
 
 
 class BackgroundServer(uvicorn.Server):
