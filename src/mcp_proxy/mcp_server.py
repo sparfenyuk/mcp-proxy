@@ -192,6 +192,25 @@ async def run_mcp_server(
             log_level=mcp_settings.log_level.lower(),
         )
         http_server = uvicorn.Server(config)
+
+        # Print out the SSE URLs for all configured servers
+        base_url = f"http://{mcp_settings.bind_host}:{mcp_settings.port}"
+        sse_urls = []
+
+        # Add default server if configured
+        if default_server_params:
+            sse_urls.append(f"{base_url}/sse")
+
+        # Add named servers
+        sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
+
+        # Display the SSE URLs prominently
+        if sse_urls:
+            # Using print directly for user visibility, with noqa to ignore linter warnings
+            logger.info("Serving MCP Servers via SSE:")
+            for url in sse_urls:
+                logger.info("  - %s", url)
+
         logger.debug(
             "Serving incoming MCP requests on %s:%s",
             mcp_settings.bind_host,
