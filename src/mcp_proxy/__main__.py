@@ -27,6 +27,7 @@ SSE_URL: t.Final[str | None] = os.getenv(
     None,
 )
 
+
 def _setup_argument_parser() -> argparse.ArgumentParser:
     """Set up and return the argument parser for the MCP proxy."""
     parser = argparse.ArgumentParser(
@@ -182,6 +183,7 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         ),
     )
 
+
 def _setup_logging(*, debug: bool) -> logging.Logger:
     """Set up logging configuration and return the logger."""
     logging.basicConfig(
@@ -192,7 +194,8 @@ def _setup_logging(*, debug: bool) -> logging.Logger:
 
 
 def _handle_sse_client_mode(
-    args_parsed: argparse.Namespace, logger: logging.Logger,
+    args_parsed: argparse.Namespace,
+    logger: logging.Logger,
 ) -> None:
     """Handle SSE client mode operation."""
     if args_parsed.named_server_definitions:
@@ -209,7 +212,9 @@ def _handle_sse_client_mode(
 
 
 def _configure_default_server(
-    args_parsed: argparse.Namespace, base_env: dict[str, str], logger: logging.Logger,
+    args_parsed: argparse.Namespace,
+    base_env: dict[str, str],
+    logger: logging.Logger,
 ) -> StdioServerParameters | None:
     """Configure the default server if applicable."""
     if not (
@@ -236,7 +241,9 @@ def _configure_default_server(
 
 
 def _load_named_servers_from_config(
-    config_path: str, base_env: dict[str, str], logger: logging.Logger,
+    config_path: str,
+    base_env: dict[str, str],
+    logger: logging.Logger,
 ) -> dict[str, StdioServerParameters]:
     """Load named server configurations from a file."""
     try:
@@ -245,7 +252,8 @@ def _load_named_servers_from_config(
         # Specific errors are already logged by the loader function
         # We log a generic message here before exiting
         logger.exception(
-            "Failed to load server configurations from %s. Exiting.", config_path,
+            "Failed to load server configurations from %s. Exiting.",
+            config_path,
         )
         sys.exit(1)
     except Exception:  # Catch any other unexpected errors from loader
@@ -327,7 +335,9 @@ def main() -> None:
         sys.exit(1)
 
     # Handle SSE client mode if URL is provided
-    if args_parsed.command_or_url and args_parsed.command_or_url.startswith(("http://", "https://")):
+    if args_parsed.command_or_url and args_parsed.command_or_url.startswith(
+        ("http://", "https://"),
+    ):
         _handle_sse_client_mode(args_parsed, logger)
         return
 
@@ -350,11 +360,15 @@ def main() -> None:
                 "--named-server CLI arguments are ignored when --named-server-config is provided.",
             )
         named_stdio_params = _load_named_servers_from_config(
-            args_parsed.named_server_config, base_env, logger,
+            args_parsed.named_server_config,
+            base_env,
+            logger,
         )
     elif args_parsed.named_server_definitions:
         named_stdio_params = _configure_named_servers_from_cli(
-            args_parsed.named_server_definitions, base_env, logger,
+            args_parsed.named_server_definitions,
+            base_env,
+            logger,
         )
 
     # Ensure at least one server is configured
@@ -374,6 +388,7 @@ def main() -> None:
             mcp_settings=mcp_settings,
         ),
     )
+
 
 if __name__ == "__main__":
     main()

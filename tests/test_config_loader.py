@@ -20,7 +20,9 @@ def create_temp_config_file() -> Generator[Callable[[dict], str], None, None]:
 
     def _create_temp_config_file(config_content: dict) -> str:
         with tempfile.NamedTemporaryFile(
-            mode="w", delete=False, suffix=".json",
+            mode="w",
+            delete=False,
+            suffix=".json",
         ) as tmp_config:
             json.dump(config_content, tmp_config)
             temp_files.append(tmp_config.name)
@@ -99,7 +101,9 @@ def test_json_decode_error() -> None:
     """Test handling of invalid JSON in configuration files."""
     # Create a file with invalid JSON content
     with tempfile.NamedTemporaryFile(
-        mode="w", delete=False, suffix=".json",
+        mode="w",
+        delete=False,
+        suffix=".json",
     ) as tmp_config:
         tmp_config.write("this is not json {")
         tmp_config_path = tmp_config.name
@@ -153,7 +157,8 @@ def test_invalid_config_format_missing_mcpservers(
 
 @patch("mcp_proxy.config_loader.logger")
 def test_invalid_server_entry_not_dict(
-    mock_logger: object, create_temp_config_file: Callable[[dict], str],
+    mock_logger: object,
+    create_temp_config_file: Callable[[dict], str],
 ) -> None:
     """Test handling of server entries that are not dictionaries."""
     config_content = {"mcpServers": {"server1": "not_a_dict"}}
@@ -170,7 +175,8 @@ def test_invalid_server_entry_not_dict(
 
 @patch("mcp_proxy.config_loader.logger")
 def test_server_entry_missing_command(
-    mock_logger: object, create_temp_config_file: Callable[[dict], str],
+    mock_logger: object,
+    create_temp_config_file: Callable[[dict], str],
 ) -> None:
     """Test handling of server entries missing the command field."""
     config_content = {"mcpServers": {"server_no_command": {"args": ["arg1"]}}}
@@ -185,7 +191,8 @@ def test_server_entry_missing_command(
 
 @patch("mcp_proxy.config_loader.logger")
 def test_server_entry_invalid_args_type(
-    mock_logger: object, create_temp_config_file: Callable[[dict], str],
+    mock_logger: object,
+    create_temp_config_file: Callable[[dict], str],
 ) -> None:
     """Test handling of server entries with invalid args type."""
     config_content = {
@@ -222,7 +229,9 @@ def test_config_file_is_empty_string() -> None:
     """Test handling of configuration files with empty content."""
     # Create a file with an empty string
     with tempfile.NamedTemporaryFile(
-        mode="w", delete=False, suffix=".json",
+        mode="w",
+        delete=False,
+        suffix=".json",
     ) as tmp_config:
         tmp_config.write("")  # Empty content
         tmp_config_path = tmp_config.name

@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 
 
 def load_named_server_configs_from_file(
-    config_file_path: str, base_env: dict[str, str],
+    config_file_path: str,
+    base_env: dict[str, str],
 ) -> dict[str, StdioServerParameters]:
     """Loads named server configurations from a JSON file.
 
