@@ -1,5 +1,11 @@
+"""Configuration loader for MCP proxy.
+
+This module provides functionality to load named server configurations from JSON files.
+"""
+
 import json
 import logging
+from pathlib import Path
 
 from mcp.client.stdio import StdioServerParameters
 
@@ -24,22 +30,24 @@ def load_named_server_configs_from_file(
         ValueError: If the config file format is invalid.
     """
     named_stdio_params: dict[str, StdioServerParameters] = {}
-    logger.info(f"Loading named server configurations from: {config_file_path}")
+    logger.info("Loading named server configurations from: %s", config_file_path)
 
     try:
-        with open(config_file_path) as f:
+        with Path(config_file_path).open() as f:
             config_data = json.load(f)
     except FileNotFoundError:
-        logger.error(f"Configuration file not found: {config_file_path}")
+        logger.exception("Configuration file not found: %s", config_file_path)
         raise
     except json.JSONDecodeError:
-        logger.error(f"Error decoding JSON from configuration file: {config_file_path}")
+        logger.exception("Error decoding JSON from configuration file: %s", config_file_path)
         raise
     except Exception as e:
-        logger.error(
-            f"Unexpected error opening or reading configuration file {config_file_path}: {e}",
+        logger.exception(
+            "Unexpected error opening or reading configuration file %s",
+            config_file_path,
         )
-        raise ValueError(f"Could not read configuration file: {e}")
+        error_message = f"Could not read configuration file: {e}"
+        raise ValueError(error_message) from e
 
     if not isinstance(config_data, dict) or "mcpServers" not in config_data:
         msg = f"Invalid config file format in {config_file_path}. Missing 'mcpServers' key."
@@ -49,11 +57,13 @@ def load_named_server_configs_from_file(
     for name, server_config in config_data.get("mcpServers", {}).items():
         if not isinstance(server_config, dict):
             logger.warning(
-                f"Skipping invalid server config for '{name}' in {config_file_path}. Entry is not a dictionary.",
+                "Skipping invalid server config for '%s' in %s. Entry is not a dictionary.",
+                name,
+                config_file_path,
             )
             continue
         if not server_config.get("enabled", True):  # Default to True if 'enabled' is not present
-            logger.info(f"Named server '{name}' from config is not enabled. Skipping.")
+            logger.info("Named server '%s' from config is not enabled. Skipping.", name)
             continue
 
         command = server_config.get("command")
@@ -61,12 +71,14 @@ def load_named_server_configs_from_file(
 
         if not command:
             logger.warning(
-                f"Named server '{name}' from config is missing 'command'. Skipping.",
+                "Named server '%s' from config is missing 'command'. Skipping.",
+                name,
             )
             continue
         if not isinstance(command_args, list):
             logger.warning(
-                f"Named server '{name}' from config has invalid 'args' (must be a list). Skipping.",
+                "Named server '%s' from config has invalid 'args' (must be a list). Skipping.",
+                name,
             )
             continue
 
@@ -77,7 +89,10 @@ def load_named_server_configs_from_file(
             cwd=None,
         )
         logger.info(
-            f"Configured named server '{name}' from config: {command} {' '.join(command_args)}",
+            "Configured named server '%s' from config: %s %s",
+            name,
+            command,
+            " ".join(command_args),
         )
 
     return named_stdio_params
