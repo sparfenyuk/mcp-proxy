@@ -329,7 +329,7 @@ def main() -> None:
     """Start the client using asyncio."""
     parser = _setup_argument_parser()
     args_parsed = parser.parse_args()
-    logger = _setup_logging(args_parsed.debug)
+    logger = _setup_logging(debug=args_parsed.debug)
 
     # Validate required arguments
     if (
