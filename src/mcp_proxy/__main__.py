@@ -20,6 +20,7 @@ from mcp.client.stdio import StdioServerParameters
 from .config_loader import load_named_server_configs_from_file
 from .mcp_server import MCPServerSettings, run_mcp_server
 from .sse_client import run_sse_client
+from .streamablehttp_client import run_streamablehttp_client
 
 # Deprecated env var. Here for backwards compatibility.
 SSE_URL: t.Final[str | None] = os.getenv(
@@ -31,12 +32,11 @@ SSE_URL: t.Final[str | None] = os.getenv(
 def _setup_argument_parser() -> argparse.ArgumentParser:
     """Set up and return the argument parser for the MCP proxy."""
     parser = argparse.ArgumentParser(
-        description=(
-            "Start the MCP proxy in one of two possible modes: as an SSE or stdio client."
-        ),
+        description=("Start the MCP proxy in one of two possible modes: as a client or a server."),
         epilog=(
             "Examples:\n"
             "  mcp-proxy http://localhost:8080/sse\n"
+            "  mcp-proxy --transport streamablehttp http://localhost:8080/mcp\n"
             "  mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse\n"
             "  mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2\n"
             "  mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080\n"
@@ -55,18 +55,18 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "command_or_url",
         help=(
-            "Command or URL to connect to. When a URL, will run an SSE client. "
+            "Command or URL to connect to. When a URL, will run an SSE/StreamableHTTP client. "
             "Otherwise, if --named-server is not used, this will be the command "
             "for the default stdio client. If --named-server is used, this argument "
-            "is ignored for stdio mode unless no default server is implied by it. "
+            "is ignored for stdio mode unless no default server is desired. "
             "See corresponding options for more details."
         ),
         nargs="?",
         default=SSE_URL,
     )
 
-    sse_client_group = parser.add_argument_group("SSE client options")
-    sse_client_group.add_argument(
+    client_group = parser.add_argument_group("SSE/StreamableHTTP client options")
+    client_group.add_argument(
         "-H",
         "--headers",
         nargs=2,
@@ -74,6 +74,12 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         metavar=("KEY", "VALUE"),
         help="Headers to pass to the SSE server. Can be used multiple times.",
         default=[],
+    )
+    client_group.add_argument(
+        "--transport",
+        choices=["sse", "streamablehttp"],
+        default="sse",  # For backwards compatibility
+        help="The transport to use for the client. Default is SSE.",
     )
 
     stdio_client_options = parser.add_argument_group("stdio client options")
@@ -197,18 +203,22 @@ def _handle_sse_client_mode(
     args_parsed: argparse.Namespace,
     logger: logging.Logger,
 ) -> None:
-    """Handle SSE client mode operation."""
+    """Handle SSE/StreamableHTTP client mode operation."""
     if args_parsed.named_server_definitions:
         logger.warning(
             "--named-server arguments are ignored when command_or_url is an HTTP/HTTPS URL "
-            "(SSE client mode).",
+            "(SSE/StreamableHTTP client mode).",
         )
     # Start a client connected to the SSE server, and expose as a stdio server
-    logger.debug("Starting SSE client and stdio server")
+    logger.debug("Starting SSE/StreamableHTTP client and stdio server")
     headers = dict(args_parsed.headers)
     if api_access_token := os.getenv("API_ACCESS_TOKEN", None):
         headers["Authorization"] = f"Bearer {api_access_token}"
-    asyncio.run(run_sse_client(args_parsed.command_or_url, headers=headers))
+
+    if args_parsed.transport == "streamablehttp":
+        asyncio.run(run_streamablehttp_client(args_parsed.command_or_url, headers=headers))
+    else:
+        asyncio.run(run_sse_client(args_parsed.command_or_url, headers=headers))
 
 
 def _configure_default_server(
