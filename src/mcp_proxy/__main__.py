@@ -17,6 +17,7 @@ from mcp.client.stdio import StdioServerParameters
 
 from .mcp_server import MCPServerSettings, run_mcp_server
 from .sse_client import run_sse_client
+from .streamablehttp_client import run_streamablehttp_client
 
 # Deprecated env var. Here for backwards compatibility.
 SSE_URL: t.Final[str | None] = os.getenv(
@@ -28,12 +29,11 @@ SSE_URL: t.Final[str | None] = os.getenv(
 def main() -> None:
     """Start the client using asyncio."""
     parser = argparse.ArgumentParser(
-        description=(
-            "Start the MCP proxy in one of two possible modes: as an SSE or stdio client."
-        ),
+        description=("Start the MCP proxy in one of two possible modes: as a client or a server."),
         epilog=(
             "Examples:\n"
             "  mcp-proxy http://localhost:8080/sse\n"
+            "  mcp-proxy --transport streamablehttp http://localhost:8080/mcp\n"
             "  mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse\n"
             "  mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2\n"
             "  mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE\n"
@@ -44,7 +44,7 @@ def main() -> None:
     parser.add_argument(
         "command_or_url",
         help=(
-            "Command or URL to connect to. When a URL, will run an SSE client, "
+            "Command or URL to connect to. When a URL, will run an SSE/StreamableHTTP client, "
             "otherwise will run the given command and connect as a stdio client. "
             "See corresponding options for more details."
         ),
@@ -52,8 +52,8 @@ def main() -> None:
         default=SSE_URL,
     )
 
-    sse_client_group = parser.add_argument_group("SSE client options")
-    sse_client_group.add_argument(
+    client_group = parser.add_argument_group("SSE/StreamableHTTP client options")
+    client_group.add_argument(
         "-H",
         "--headers",
         nargs=2,
@@ -61,6 +61,12 @@ def main() -> None:
         metavar=("KEY", "VALUE"),
         help="Headers to pass to the SSE server. Can be used multiple times.",
         default=[],
+    )
+    client_group.add_argument(
+        "--transport",
+        choices=["sse", "streamablehttp"],
+        default="sse",  # For backwards compatibility
+        help="The transport to use for the client. Default is SSE.",
     )
 
     stdio_client_options = parser.add_argument_group("stdio client options")
@@ -155,7 +161,10 @@ def main() -> None:
         headers = dict(args.headers)
         if api_access_token := os.getenv("API_ACCESS_TOKEN", None):
             headers["Authorization"] = f"Bearer {api_access_token}"
-        asyncio.run(run_sse_client(args.command_or_url, headers=headers))
+        if args.transport == "streamablehttp":
+            asyncio.run(run_streamablehttp_client(args.command_or_url, headers=headers))
+        else:
+            asyncio.run(run_sse_client(args.command_or_url, headers=headers))
         return
 
     # Start a client connected to the given command, and expose as an SSE server

@@ -7,23 +7,23 @@
 [![smithery badge](https://smithery.ai/badge/mcp-proxy)](https://smithery.ai/server/mcp-proxy)
 
 - [mcp-proxy](#mcp-proxy)
-    - [About](#about)
-    - [1. stdio to SSE/StreamableHttp](#1-stdio-to-sse)
-        - [1.1 Configuration](#11-configuration)
-        - [1.2 Example usage](#12-example-usage)
-    - [2. SSE to stdio](#2-sse-to-stdio)
-        - [2.1 Configuration](#21-configuration)
-        - [2.2 Example usage](#22-example-usage)
-    - [Installation](#installation)
-        - [Installing via Smithery](#installing-via-smithery)
-        - [Installing via PyPI](#installing-via-pypi)
-        - [Installing via Github repository (latest)](#installing-via-github-repository-latest)
-        - [Installing as container](#installing-as-container)
-        - [Troubleshooting](#troubleshooting)
-    - [Extending the container image](#extending-the-container-image)
-    - [Docker Compose Setup](#docker-compose-setup)
-    - [Command line arguments](#command-line-arguments)
-    - [Testing](#testing)
+  - [About](#about)
+  - [1. stdio to SSE/StreamableHTTP](#1-stdio-to-ssestreamablehttp)
+    - [1.1 Configuration](#11-configuration)
+    - [1.2 Example usage](#12-example-usage)
+  - [2. SSE to stdio](#2-sse-to-stdio)
+    - [2.1 Configuration](#21-configuration)
+    - [2.2 Example usage](#22-example-usage)
+  - [Installation](#installation)
+    - [Installing via Smithery](#installing-via-smithery)
+    - [Installing via PyPI](#installing-via-pypi)
+    - [Installing via Github repository (latest)](#installing-via-github-repository-latest)
+    - [Installing as container](#installing-as-container)
+    - [Troubleshooting](#troubleshooting)
+  - [Extending the container image](#extending-the-container-image)
+  - [Docker Compose Setup](#docker-compose-setup)
+  - [Command line arguments](#command-line-arguments)
+  - [Testing](#testing)
 
 ## About
 
@@ -51,19 +51,20 @@ graph LR
 
 ### 1.1 Configuration
 
-This mode requires passing the URL to the MCP Server SSE endpoint as the first argument to the program.
+This mode requires providing the URL of the MCP Server's SSE endpoint as the program’s first argument. If the server uses Streamable HTTP transport, make sure to enforce it on the `mcp-proxy` side by passing `--transport=streamablehttp`.
 
 Arguments
 
-| Name             | Required | Description                                      | Example                                       |
-|------------------|----------|--------------------------------------------------|-----------------------------------------------|
-| `command_or_url` | Yes      | The MCP server SSE endpoint to connect to        | http://example.io/sse                         |
-| `--headers`      | No       | Headers to use for the MCP server SSE connection | Authorization 'Bearer my-secret-access-token' |
+| Name             | Required | Description                                                                                                       | Example                                       |
+| ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| `command_or_url` | Yes      | The MCP server SSE endpoint to connect to                                                                         | http://example.io/sse                         |
+| `--headers`      | No       | Headers to use for the MCP server SSE connection                                                                  | Authorization 'Bearer my-secret-access-token' |
+| `--transport`    | No       | Decides which transport protocol to use when connecting to an MCP server. Can be either 'sse' or 'streamablehttp' | streamablehttp                                |
 
 Environment Variables
 
 | Name               | Required | Description                                                                  | Example    |
-|--------------------|----------|------------------------------------------------------------------------------|------------|
+| ------------------ | -------- | ---------------------------------------------------------------------------- | ---------- |
 | `API_ACCESS_TOKEN` | No       | Can be used instead of `--headers Authorization 'Bearer <API_ACCESS_TOKEN>'` | YOUR_TOKEN |
 
 ### 1.2 Example usage
@@ -115,7 +116,7 @@ separator.
 Arguments
 
 | Name                      | Required                   | Description                                                                                   | Example               |
-|---------------------------|----------------------------|-----------------------------------------------------------------------------------------------|-----------------------|
+| ------------------------- | -------------------------- | --------------------------------------------------------------------------------------------- | --------------------- |
 | `command_or_url`          | Yes                        | The command to spawn the MCP stdio server                                                     | uvx mcp-server-fetch  |
 | `--port`                  | No, random available       | The MCP server port to listen on                                                              | 8080                  |
 | `--host`                  | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on                                        | 0.0.0.0               |
@@ -256,22 +257,24 @@ services:
 ## Command line arguments
 
 ```bash
-usage: mcp-proxy [-h] [-H KEY VALUE] [-e KEY VALUE] [--cwd CWD] [--pass-environment | --no-pass-environment] [--debug | --no-debug] [--port PORT]
-                 [--host HOST] [--stateless | --no-stateless] [--sse-port SSE_PORT] [--sse-host SSE_HOST]
+usage: mcp-proxy [-h] [-H KEY VALUE] [--transport {sse,streamablehttp}] [-e KEY VALUE] [--cwd CWD] [--pass-environment | --no-pass-environment]
+                 [--debug | --no-debug] [--port PORT] [--host HOST] [--stateless | --no-stateless] [--sse-port SSE_PORT] [--sse-host SSE_HOST]
                  [--allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]]
                  [command_or_url] [args ...]
 
-Start the MCP proxy in one of two possible modes: as an SSE or stdio client.
+Start the MCP proxy in one of two possible modes: as a client or a server.
 
 positional arguments:
-  command_or_url        Command or URL to connect to. When a URL, will run an SSE client, otherwise will run the given command and connect as a stdio client. See corresponding options for more details.
+  command_or_url        Command or URL to connect to. When a URL, will run an SSE/StreamableHTTP client, otherwise will run the given command and connect as a stdio client. See corresponding options for more details.
 
 options:
   -h, --help            show this help message and exit
 
-SSE client options:
+SSE/StreamableHTTP client options:
   -H, --headers KEY VALUE
                         Headers to pass to the SSE server. Can be used multiple times.
+  --transport {sse,streamablehttp}
+                        The transport to use for the client. Default is SSE.
 
 stdio client options:
   args                  Any extra arguments to the command to spawn the server
@@ -293,6 +296,7 @@ SSE server options:
 
 Examples:
   mcp-proxy http://localhost:8080/sse
+  mcp-proxy --transport streamablehttp http://localhost:8080/mcp
   mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
   mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2
   mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE
