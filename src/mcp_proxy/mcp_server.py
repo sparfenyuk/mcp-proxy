@@ -5,7 +5,7 @@ import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 import uvicorn
 from mcp.client.session import ClientSession
@@ -18,7 +18,7 @@ from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-from starlette.routing import Mount, Route
+from starlette.routing import BaseRoute, Mount, Route
 from starlette.types import Receive, Scope, Send
 
 from .proxy_server import create_proxy_server
@@ -38,7 +38,7 @@ class MCPServerSettings:
 
 
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
-_global_status = {
+_global_status: dict[str, Any] = {
     "api_last_activity": datetime.now(timezone.utc).isoformat(),
     "server_instances": {},  # Could be used to store per-instance status later
 }
@@ -57,7 +57,7 @@ def create_single_instance_routes(
     mcp_server_instance: MCPServerSDK[object],
     *,
     stateless_instance: bool,
-) -> tuple[list[Route | Mount], StreamableHTTPSessionManager]:  # Return the manager itself
+) -> tuple[list[BaseRoute], StreamableHTTPSessionManager]:  # Return the manager itself
     """Create Starlette routes and the HTTP session manager for a single MCP server instance."""
     logger.debug(
         "Creating routes for a single MCP server instance (stateless: %s)",
@@ -106,7 +106,7 @@ async def run_mcp_server(
     if named_server_params is None:
         named_server_params = {}
 
-    all_routes: list[Route | Mount] = [
+    all_routes: list[BaseRoute] = [
         Route("/status", endpoint=_handle_status),  # Global status endpoint
     ]
     # Use AsyncExitStack to manage lifecycles of multiple components
