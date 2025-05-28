@@ -64,7 +64,7 @@ def create_single_instance_routes(
         stateless_instance,
     )
 
-    sse_transport = SseServerTransport("messages/")
+    sse_transport = SseServerTransport("/messages/")
     http_session_manager = StreamableHTTPSessionManager(
         app=mcp_server_instance,
         event_store=None,
