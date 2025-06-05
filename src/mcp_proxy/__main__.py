@@ -154,12 +154,12 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
     mcp_server_group.add_argument(
         "--port",
         type=int,
-        default=None,
+        default=0,
         help="Port to expose an SSE server on. Default is a random port",
     )
     mcp_server_group.add_argument(
         "--host",
-        default=None,
+        default=127.0.0.1,
         help="Host to expose an SSE server on. Default is 127.0.0.1",
     )
     mcp_server_group.add_argument(
