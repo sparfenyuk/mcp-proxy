@@ -159,7 +159,7 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
     )
     mcp_server_group.add_argument(
         "--host",
-        default=127.0.0.1,
+        default="127.0.0.1",
         help="Host to expose an SSE server on. Default is 127.0.0.1",
     )
     mcp_server_group.add_argument(
