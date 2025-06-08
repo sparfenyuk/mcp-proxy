@@ -48,7 +48,7 @@ def test_load_valid_config(create_temp_config_file: Callable[[dict], str]) -> No
             },
             "server2": {
                 "command": "cat",
-                "args": ["file.txt"]
+                "args": ["file.txt"],
             },
         },
     }
