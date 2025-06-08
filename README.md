@@ -196,6 +196,9 @@ The JSON file should follow this structure:
         "-y",
         "@modelcontextprotocol/server-github"
       ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_TOKEN>"
+      },
       "transportType": "stdio"
     }
   }

@@ -43,11 +43,12 @@ def test_load_valid_config(create_temp_config_file: Callable[[dict], str]) -> No
             "server1": {
                 "command": "echo",
                 "args": ["hello"],
+                "env": {"FOO": "bar"},
                 "enabled": True,
             },
             "server2": {
                 "command": "cat",
-                "args": ["file.txt"],
+                "args": ["file.txt"]
             },
         },
     }
