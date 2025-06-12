@@ -38,10 +38,18 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
             "  mcp-proxy http://localhost:8080/sse\n"
             "  mcp-proxy --transport streamablehttp http://localhost:8080/mcp\n"
             "  mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse\n"
+            "  mcp-proxy -H Authorization 'xyz' -H Content-Type 'application/json' http://localhost:8080/sse\n"
             "  mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2\n"
             "  mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080\n"
             "  mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE\n"
             "  mcp-proxy your-command --port 8080 --allow-origin='*'\n"
+            "\n"
+            "Header Usage Notes:\n"
+            "- Use multiple -H/--headers for multiple headers\n"
+            "- For authentication: --headers Authorization 'Bearer your-token'\n"
+            "- SSE transport is recommended for authentication (default)\n"
+            "- StreamableHTTP transport has known issues with authentication\n"
+            "- Use --debug for detailed header logging\n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -211,14 +219,53 @@ def _handle_sse_client_mode(
         )
     # Start a client connected to the SSE server, and expose as a stdio server
     logger.debug("Starting SSE/StreamableHTTP client and stdio server")
+    
+    # Process headers with validation and logging
     headers = dict(args_parsed.headers)
+    logger.debug(f"Raw headers from command line: {args_parsed.headers}")
+    logger.debug(f"Processed headers dict: {headers}")
+    
+    # Validate headers
+    for key, value in headers.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            logger.error(f"Invalid header format: {key}={value} (both key and value must be strings)")
+            sys.exit(1)
+        if not key.strip():
+            logger.error(f"Empty header key found")
+            sys.exit(1)
+        logger.debug(f"Validated header: {key}={value}")
+    
     if api_access_token := os.getenv("API_ACCESS_TOKEN", None):
         headers["Authorization"] = f"Bearer {api_access_token}"
+        logger.debug("Added Authorization header from API_ACCESS_TOKEN environment variable")
 
-    if args_parsed.transport == "streamablehttp":
-        asyncio.run(run_streamablehttp_client(args_parsed.command_or_url, headers=headers))
-    else:
-        asyncio.run(run_sse_client(args_parsed.command_or_url, headers=headers))
+    # Log final headers (mask sensitive values)
+    masked_headers = {}
+    for key, value in headers.items():
+        if key.lower() in ['authorization', 'x-api-key', 'api-key']:
+            masked_headers[key] = f"{value[:10]}***" if len(value) > 10 else "***"
+        else:
+            masked_headers[key] = value
+    logger.info(f"Final headers to be sent (sensitive values masked): {masked_headers}")
+    
+    # Validate URL
+    if not args_parsed.command_or_url.startswith(("http://", "https://")):
+        logger.error(f"Invalid URL format: {args_parsed.command_or_url}")
+        sys.exit(1)
+    
+    logger.info(f"Connecting to {args_parsed.transport.upper()} server at: {args_parsed.command_or_url}")
+
+    try:
+        if args_parsed.transport == "streamablehttp":
+            logger.debug("Using StreamableHTTP transport")
+            asyncio.run(run_streamablehttp_client(args_parsed.command_or_url, headers=headers))
+        else:
+            logger.debug("Using SSE transport")
+            asyncio.run(run_sse_client(args_parsed.command_or_url, headers=headers))
+    except Exception as e:
+        logger.error(f"Failed to connect to MCP server: {e}")
+        logger.debug("Exception details:", exc_info=True)
+        sys.exit(1)
 
 
 def _configure_default_server(
