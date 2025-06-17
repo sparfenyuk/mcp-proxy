@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/sparfenyuk-mcp-proxy-badge.png)](https://mseep.ai/app/sparfenyuk-mcp-proxy)
+
 # mcp-proxy
 
 ![GitHub License](https://img.shields.io/github/license/sparfenyuk/mcp-proxy)
