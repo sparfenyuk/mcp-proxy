@@ -43,6 +43,7 @@ def test_load_valid_config(create_temp_config_file: Callable[[dict], str]) -> No
             "server1": {
                 "command": "echo",
                 "args": ["hello"],
+                "env": {"FOO": "bar"},
                 "enabled": True,
             },
             "server2": {
@@ -53,6 +54,7 @@ def test_load_valid_config(create_temp_config_file: Callable[[dict], str]) -> No
     }
     tmp_config_path = create_temp_config_file(config_content)
     base_env = {"PASSED": "env_value"}
+    base_env_with_added_env = {"PASSED": "env_value", "FOO": "bar"}
 
     loaded_params = load_named_server_configs_from_file(tmp_config_path, base_env)
 
@@ -60,7 +62,7 @@ def test_load_valid_config(create_temp_config_file: Callable[[dict], str]) -> No
     assert loaded_params["server1"].command == "echo"
     assert loaded_params["server1"].args == ["hello"]
     assert (
-        loaded_params["server1"].env == base_env
+        loaded_params["server1"].env == base_env_with_added_env
     )  # Env is a copy, check if it contains base_env items
 
     assert "server2" in loaded_params
