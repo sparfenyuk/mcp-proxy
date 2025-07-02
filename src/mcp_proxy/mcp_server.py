@@ -185,6 +185,8 @@ async def run_mcp_server(
             lifespan=combined_lifespan,
         )
 
+        starlette_app.router.redirect_slashes = False
+
         config = uvicorn.Config(
             starlette_app,
             host=mcp_settings.bind_host,
