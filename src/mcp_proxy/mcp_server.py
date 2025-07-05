@@ -72,7 +72,7 @@ def create_single_instance_routes(
         stateless=stateless_instance,
     )
 
-    async def handle_sse_instance(request: Request) -> None:
+    async def handle_sse_instance(request: Request) -> Response:
         async with sse_transport.connect_sse(
             request.scope,
             request.receive,
@@ -84,6 +84,7 @@ def create_single_instance_routes(
                 write_stream,
                 mcp_server_instance.create_initialization_options(),
             )
+        return Response()
 
     async def handle_streamable_http_instance(scope: Scope, receive: Receive, send: Send) -> None:
         _update_global_activity()
