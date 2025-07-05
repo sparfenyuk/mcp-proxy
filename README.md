@@ -315,24 +315,24 @@ services:
 ## Command line arguments
 
 ```bash
-usage: mcp-proxy [-h] [-H KEY VALUE] [--transport {sse,streamablehttp}] [-e KEY VALUE] [--cwd CWD] [--pass-environment | --no-pass-environment]
-                 [--debug | --no-debug] [--named-server NAME COMMAND_STRING] [--named-server-config FILE_PATH] [--port PORT] [--host HOST]
-                 [--stateless | --no-stateless] [--sse-port SSE_PORT] [--sse-host SSE_HOST] [--allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]]
+usage: mcp-proxy [-h] [--version] [-H KEY VALUE] [--transport {sse,streamablehttp}]
+                 [-e KEY VALUE] [--cwd CWD]
+                 [--pass-environment | --no-pass-environment] [--debug | --no-debug]
+                 [--named-server NAME COMMAND_STRING]
+                 [--named-server-config FILE_PATH] [--port PORT] [--host HOST]
+                 [--stateless | --no-stateless] [--sse-port SSE_PORT]
+                 [--sse-host SSE_HOST]
+                 [--allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]]
                  [command_or_url] [args ...]
 
-Start the MCP proxy.
-It can run as an SSE client (connecting to a remote SSE server and exposing stdio).
-Or, it can run as an SSE server (connecting to local stdio command(s) and exposing them over SSE).
-When running as an SSE server, it can proxy a single default stdio command or multiple named stdio commands (defined via CLI or a config file).
+Start the MCP proxy in one of two possible modes: as a client or a server.
 
 positional arguments:
-  command_or_url        Command or URL.
-                        If URL (http/https): Runs in SSE/StreamableHTTP client mode.
-                        If command string: Runs in SSE server mode, this is the default stdio server.
-                        If --named-server or --named-server-config is used, this can be omitted if no default server is desired.
+  command_or_url        Command or URL to connect to. When a URL, will run an SSE/StreamableHTTP client. Otherwise, if --named-server is not used, this will be the command for the default stdio client. If --named-server is used, this argument is ignored for stdio mode unless no default server is desired. See corresponding options for more details.
 
 options:
   -h, --help            show this help message and exit
+  --version             Show the version and exit
 
 SSE/StreamableHTTP client options:
   -H, --headers KEY VALUE
@@ -348,7 +348,7 @@ stdio client options:
                         Pass through all environment variables when spawning all server processes.
   --debug, --no-debug   Enable debug mode with detailed logging output.
   --named-server NAME COMMAND_STRING
-                        Define a named stdio server. NAME is for the URL path /servers/NAME/. COMMAND_STRING is a single string with the command and its arguments (e.g., 'uvx mcp-server-fetch --timeout 10'). These servers inherit the proxy's CWD and environment from --pass-environment. Can be specified multiple times. Ignored if --named-server-config is used.
+                        Define a named stdio server. NAME is for the URL path /servers/NAME/. COMMAND_STRING is a single string with the command and its arguments (e.g., 'uvx mcp-server-fetch --timeout 10'). These servers inherit the proxy's CWD and environment from --pass-environment.
   --named-server-config FILE_PATH
                         Path to a JSON configuration file for named stdio servers. If provided, this will be the exclusive source for named server definitions, and any --named-server CLI arguments will be ignored.
 
