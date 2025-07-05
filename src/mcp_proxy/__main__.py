@@ -14,6 +14,7 @@ import os
 import shlex
 import sys
 import typing as t
+from importlib.metadata import version
 
 from mcp.client.stdio import StdioServerParameters
 
@@ -52,6 +53,18 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
 
 def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
     """Add all arguments to the argument parser."""
+    try:
+        package_version = version("mcp-proxy")
+    except Exception:  # noqa: BLE001
+        package_version = "unknown"
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {package_version}",
+        help="Show the version and exit",
+    )
+
     parser.add_argument(
         "command_or_url",
         help=(
