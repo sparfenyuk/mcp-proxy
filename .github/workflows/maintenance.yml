@@ -1,0 +1,466 @@
+name: Repository Maintenance
+
+on:
+  # Automatic triggers when config files change
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/labels.yml'
+      - '.github/labeler.yml'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
+      - '.releaserc.json'
+      - 'codecov.yml'
+  # Scheduled maintenance
+  schedule:
+    # Run weekly on Sundays at 2 AM UTC
+    - cron: '0 2 * * 0'
+  # Manual triggers
+  workflow_dispatch:
+    inputs:
+      setup_labels:
+        description: 'Set up GitHub labels'
+        required: false
+        default: false
+        type: boolean
+      update_dependencies:
+        description: 'Update UV lock file'
+        required: false
+        default: false
+        type: boolean
+      force_all:
+        description: 'Force run all maintenance tasks'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    outputs:
+      labels_changed: ${{ steps.changes.outputs.labels_changed }}
+      labeler_changed: ${{ steps.changes.outputs.labeler_changed }}
+      templates_changed: ${{ steps.changes.outputs.templates_changed }}
+      release_config_changed: ${{ steps.changes.outputs.release_config_changed }}
+      codecov_changed: ${{ steps.changes.outputs.codecov_changed }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 2
+
+    - name: Detect changed files
+      id: changes
+      run: |
+        # Get the list of changed files
+        CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+        echo "Changed files:"
+        echo "$CHANGED_FILES"
+        
+        # Check for specific file changes
+        if echo "$CHANGED_FILES" | grep -q "^\.github/labels\.yml$"; then
+          echo "labels_changed=true" >> $GITHUB_OUTPUT
+          echo "🏷️ Labels configuration changed"
+        else
+          echo "labels_changed=false" >> $GITHUB_OUTPUT
+        fi
+        
+        if echo "$CHANGED_FILES" | grep -q "^\.github/labeler\.yml$"; then
+          echo "labeler_changed=true" >> $GITHUB_OUTPUT
+          echo "🤖 Auto-labeler configuration changed"
+        else
+          echo "labeler_changed=false" >> $GITHUB_OUTPUT
+        fi
+        
+        if echo "$CHANGED_FILES" | grep -q "^\.github/ISSUE_TEMPLATE/\|^\.github/pull_request_template\.md$"; then
+          echo "templates_changed=true" >> $GITHUB_OUTPUT
+          echo "📝 Issue/PR templates changed"
+        else
+          echo "templates_changed=false" >> $GITHUB_OUTPUT
+        fi
+        
+        if echo "$CHANGED_FILES" | grep -q "^\.releaserc\.json$"; then
+          echo "release_config_changed=true" >> $GITHUB_OUTPUT
+          echo "🚀 Release configuration changed"
+        else
+          echo "release_config_changed=false" >> $GITHUB_OUTPUT
+        fi
+        
+        if echo "$CHANGED_FILES" | grep -q "^codecov\.yml$"; then
+          echo "codecov_changed=true" >> $GITHUB_OUTPUT
+          echo "📊 Codecov configuration changed"
+        else
+          echo "codecov_changed=false" >> $GITHUB_OUTPUT
+        fi
+
+  setup-labels:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    if: |
+      always() && (
+        needs.detect-changes.outputs.labels_changed == 'true' ||
+        github.event.inputs.setup_labels == 'true' ||
+        github.event.inputs.force_all == 'true' ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.setup_labels != 'false')
+      )
+    permissions:
+      issues: write
+      pull-requests: write
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup GitHub Labels
+      uses: crazy-max/ghaction-github-labeler@v5
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        yaml-file: .github/labels.yml
+        skip-delete: false
+        dry-run: false
+
+    - name: Comment on commit about label updates
+      if: needs.detect-changes.outputs.labels_changed == 'true'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          await github.rest.repos.createCommitComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            commit_sha: context.sha,
+            body: '🏷️ **GitHub labels updated automatically**\n\nThe label configuration was updated and all repository labels have been synchronized.'
+          });
+
+  validate-config-changes:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    if: |
+      always() && (
+        needs.detect-changes.outputs.release_config_changed == 'true' ||
+        needs.detect-changes.outputs.codecov_changed == 'true' ||
+        needs.detect-changes.outputs.templates_changed == 'true' ||
+        needs.detect-changes.outputs.labeler_changed == 'true'
+      )
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate release configuration
+      if: needs.detect-changes.outputs.release_config_changed == 'true'
+      run: |
+        echo "🔍 Validating .releaserc.json"
+        if ! cat .releaserc.json | jq empty; then
+          echo "❌ Invalid JSON in .releaserc.json"
+          exit 1
+        fi
+        echo "✅ Release configuration is valid"
+
+    - name: Validate codecov configuration
+      if: needs.detect-changes.outputs.codecov_changed == 'true'
+      run: |
+        echo "🔍 Validating codecov.yml"
+        # Basic YAML validation
+        python -c "import yaml; yaml.safe_load(open('codecov.yml'))" 2>/dev/null || {
+          echo "❌ Invalid YAML in codecov.yml"
+          exit 1
+        }
+        echo "✅ Codecov configuration is valid"
+
+    - name: Validate labeler configuration
+      if: needs.detect-changes.outputs.labeler_changed == 'true'
+      run: |
+        echo "🔍 Validating .github/labeler.yml"
+        python -c "import yaml; yaml.safe_load(open('.github/labeler.yml'))" 2>/dev/null || {
+          echo "❌ Invalid YAML in .github/labeler.yml"
+          exit 1
+        }
+        echo "✅ Labeler configuration is valid"
+
+    - name: Comment on validation results
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const changes = [];
+          if ('${{ needs.detect-changes.outputs.release_config_changed }}' === 'true') {
+            changes.push('🚀 Release configuration (.releaserc.json)');
+          }
+          if ('${{ needs.detect-changes.outputs.codecov_changed }}' === 'true') {
+            changes.push('📊 Codecov configuration (codecov.yml)');
+          }
+          if ('${{ needs.detect-changes.outputs.templates_changed }}' === 'true') {
+            changes.push('📝 Issue/PR templates');
+          }
+          if ('${{ needs.detect-changes.outputs.labeler_changed }}' === 'true') {
+            changes.push('🤖 Auto-labeler configuration (.github/labeler.yml)');
+          }
+          
+          const body = `✅ **Configuration validation completed**\n\nThe following configurations were validated:\n\n${changes.map(c => `- ${c}`).join('\n')}\n\nAll configurations are valid and ready for use.`;
+          
+          await github.rest.repos.createCommitComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            commit_sha: context.sha,
+            body: body
+          });
+
+  update-dependencies:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' || 
+      github.event.inputs.update_dependencies == 'true' ||
+      github.event.inputs.force_all == 'true'
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: Update UV lock file
+      run: |
+        uv lock --upgrade
+        uv sync --all-extras --dev
+
+    - name: Run tests with updated dependencies
+      run: |
+        uv run mypy src/
+        uv run ruff check
+        uv run pytest tests/ --tb=short
+
+    - name: Check for changes
+      id: changes
+      run: |
+        if git diff --quiet uv.lock; then
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+        else
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+          echo "Updated packages:" >> $GITHUB_OUTPUT
+          git diff --name-only >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create Pull Request
+      if: steps.changes.outputs.has_changes == 'true'
+      uses: peter-evans/create-pull-request@v5
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        commit-message: 'chore(deps): update UV lock file'
+        title: 'chore(deps): update dependencies'
+        body: |
+          ## 📦 Dependency Updates
+          
+          This PR updates the UV lock file with the latest compatible versions of all dependencies.
+          
+          ### Changes
+          - Updated `uv.lock` with latest package versions
+          - All tests pass with updated dependencies
+          
+          ### Testing
+          - ✅ Type checking passed
+          - ✅ Linting passed  
+          - ✅ Tests passed
+          
+          This is an automated PR created by the maintenance workflow.
+        branch: chore/update-dependencies
+        labels: |
+          type: chore
+          dependencies
+          release: skip
+          priority: low
+        reviewers: billyjbryant
+
+    - name: Auto-merge dependency updates
+      if: steps.changes.outputs.has_changes == 'true'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Wait a moment for the PR to be created
+        sleep 10
+        
+        # Get the PR number
+        PR_NUMBER=$(gh pr list --author "github-actions[bot]" --head chore/update-dependencies --json number --jq '.[0].number')
+        
+        if [ "$PR_NUMBER" != "null" ] && [ -n "$PR_NUMBER" ]; then
+          echo "Found PR #$PR_NUMBER, enabling auto-merge"
+          gh pr merge $PR_NUMBER --auto --squash
+        else
+          echo "Could not find PR to auto-merge"
+        fi
+
+  cleanup-artifacts:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      github.event.inputs.force_all == 'true'
+    permissions:
+      actions: write
+    steps:
+    - name: Delete old workflow artifacts
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          
+          // Get all artifacts
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner,
+            repo,
+            per_page: 100
+          });
+          
+          // Delete artifacts older than 30 days
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+          
+          let deletedCount = 0;
+          
+          for (const artifact of artifacts.data.artifacts) {
+            const createdAt = new Date(artifact.created_at);
+            
+            if (createdAt < thirtyDaysAgo) {
+              try {
+                await github.rest.actions.deleteArtifact({
+                  owner,
+                  repo,
+                  artifact_id: artifact.id
+                });
+                deletedCount++;
+                console.log(`Deleted artifact: ${artifact.name} (${artifact.id})`);
+              } catch (error) {
+                console.log(`Failed to delete artifact ${artifact.id}: ${error.message}`);
+              }
+              
+              // Rate limiting: wait between deletions
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+          }
+          
+          console.log(`Deleted ${deletedCount} old artifacts`);
+
+  security-audit:
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      github.event.inputs.force_all == 'true'
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v4
+      with:
+        version: "latest"
+
+    - name: Set up Python
+      run: uv python install 3.12
+
+    - name: Install dependencies
+      run: uv sync --all-extras --dev
+
+    - name: Run security audit
+      run: |
+        # Check for known vulnerabilities in dependencies
+        uv pip list --format=json > requirements.json
+        
+        # Use pip-audit if available, or just report current packages
+        if command -v pip-audit &> /dev/null; then
+          pip-audit --format=json --output=audit-results.json
+        else
+          echo "Security audit completed - manual review recommended"
+          echo "Current packages:"
+          uv pip list
+        fi
+
+    - name: Create security issue if vulnerabilities found
+      if: failure()
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const title = `🔒 Security Audit Alert - ${new Date().toISOString().split('T')[0]}`;
+          const body = `## Security Audit Results
+          
+          The automated security audit has detected potential vulnerabilities in our dependencies.
+          
+          **Action Required:**
+          1. Review the failing workflow logs
+          2. Update vulnerable packages
+          3. Test the application thoroughly
+          4. Create a security release if needed
+          
+          **Workflow:** [${context.workflow}](${context.payload.repository.html_url}/actions/runs/${context.runId})
+          **Date:** ${new Date().toISOString()}
+          
+          This issue was created automatically by the maintenance workflow.`;
+          
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title,
+            body,
+            labels: ['security', 'priority: high', 'type: chore']
+          });
+
+  maintenance-summary:
+    needs: [detect-changes, setup-labels, validate-config-changes]
+    runs-on: ubuntu-latest
+    if: always() && github.event_name == 'push'
+    steps:
+    - name: Create maintenance summary
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const jobs = {
+            'setup-labels': '${{ needs.setup-labels.result }}',
+            'validate-config-changes': '${{ needs.validate-config-changes.result }}'
+          };
+          
+          const changes = {
+            labels: '${{ needs.detect-changes.outputs.labels_changed }}',
+            labeler: '${{ needs.detect-changes.outputs.labeler_changed }}',
+            templates: '${{ needs.detect-changes.outputs.templates_changed }}',
+            release_config: '${{ needs.detect-changes.outputs.release_config_changed }}',
+            codecov: '${{ needs.detect-changes.outputs.codecov_changed }}'
+          };
+          
+          const actionsPerformed = [];
+          const changesDetected = [];
+          
+          // Track what changed
+          if (changes.labels === 'true') changesDetected.push('🏷️ Labels configuration');
+          if (changes.labeler === 'true') changesDetected.push('🤖 Auto-labeler rules');
+          if (changes.templates === 'true') changesDetected.push('📝 Issue/PR templates');
+          if (changes.release_config === 'true') changesDetected.push('🚀 Release configuration');
+          if (changes.codecov === 'true') changesDetected.push('📊 Codecov settings');
+          
+          // Track what actions were performed
+          if (jobs['setup-labels'] === 'success') actionsPerformed.push('✅ Updated GitHub labels');
+          if (jobs['validate-config-changes'] === 'success') actionsPerformed.push('✅ Validated configurations');
+          
+          // Only create summary if there were changes
+          if (changesDetected.length > 0) {
+            let body = `## 🔧 Automatic Maintenance Summary\n\n`;
+            body += `**Configuration changes detected:**\n${changesDetected.map(c => `- ${c}`).join('\n')}\n\n`;
+            
+            if (actionsPerformed.length > 0) {
+              body += `**Maintenance actions completed:**\n${actionsPerformed.map(a => `- ${a}`).join('\n')}\n\n`;
+            }
+            
+            body += `**Commit:** ${context.sha.substring(0, 7)}\n`;
+            body += `**Workflow:** [${context.workflow}](${context.payload.repository.html_url}/actions/runs/${context.runId})\n\n`;
+            body += `*This maintenance was triggered automatically by configuration file changes.*`;
+            
+            await github.rest.repos.createCommitComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+              body: body
+            });
+          }

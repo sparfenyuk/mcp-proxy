@@ -1,8 +1,28 @@
-"""The entry point for the mcp-proxy application. It sets up the logging and runs the main function.
+#
+# MCP Foxxy Bridge - Main Entry Point
+#
+# Copyright (C) 2024 Billy Bryant
+# Portions copyright (C) 2024 Sergey Parfenyuk (original MIT-licensed author)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# MIT License attribution: Portions of this file were originally licensed under the MIT License by Sergey Parfenyuk (2024).
+#
+"""The entry point for the mcp-foxxy-bridge application. It sets up the logging and runs the main function.
 
 Two ways to run the application:
-1. Run the application as a module `uv run -m mcp_proxy`
-2. Run the application as a package `uv run mcp-proxy`
+1. Run the application as a module `uv run -m mcp_foxxy_bridge`
+2. Run the application as a package `uv run mcp-foxxy-bridge`
 
 """
 
@@ -12,14 +32,15 @@ import json
 import logging
 import os
 import shlex
+import signal
 import sys
 import typing as t
 from importlib.metadata import version
 
 from mcp.client.stdio import StdioServerParameters
 
-from .config_loader import load_named_server_configs_from_file
-from .mcp_server import MCPServerSettings, run_mcp_server
+from .config_loader import load_named_server_configs_from_file, load_bridge_config_from_file
+from .mcp_server import MCPServerSettings, run_mcp_server, run_bridge_server
 from .sse_client import run_sse_client
 from .streamablehttp_client import run_streamablehttp_client
 
@@ -36,13 +57,13 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         description=("Start the MCP proxy in one of two possible modes: as a client or a server."),
         epilog=(
             "Examples:\n"
-            "  mcp-proxy http://localhost:8080/sse\n"
-            "  mcp-proxy --transport streamablehttp http://localhost:8080/mcp\n"
-            "  mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse\n"
-            "  mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2\n"
-            "  mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080\n"
-            "  mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE\n"
-            "  mcp-proxy your-command --port 8080 --allow-origin='*'\n"
+            "  mcp-foxxy-bridge http://localhost:8080/sse\n"
+            "  mcp-foxxy-bridge --transport streamablehttp http://localhost:8080/mcp\n"
+            "  mcp-foxxy-bridge --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse\n"
+            "  mcp-foxxy-bridge --port 8080 -- your-command --arg1 value1 --arg2 value2\n"
+            "  mcp-foxxy-bridge --named-server fetch 'uvx mcp-server-fetch' --port 8080\n"
+            "  mcp-foxxy-bridge your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE\n"
+            "  mcp-foxxy-bridge your-command --port 8080 --allow-origin='*'\n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -54,9 +75,19 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
 def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
     """Add all arguments to the argument parser."""
     try:
-        package_version = version("mcp-proxy")
+        package_version = version("mcp-foxxy-bridge")
     except Exception:  # noqa: BLE001
-        package_version = "unknown"
+        try:
+            # Try to read from VERSION file
+            import os
+            version_file = os.path.join(os.path.dirname(__file__), "..", "..", "VERSION")
+            if os.path.exists(version_file):
+                with open(version_file, "r") as f:
+                    package_version = f.read().strip()
+            else:
+                package_version = "unknown"
+        except Exception:  # noqa: BLE001
+            package_version = "unknown"
 
     parser.add_argument(
         "--version",
@@ -162,13 +193,25 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
             "and any --named-server CLI arguments will be ignored."
         ),
     )
+    stdio_client_options.add_argument(
+        "--bridge-config",
+        type=str,
+        default="config.json",
+        metavar="FILE_PATH",
+        help=(
+            "Path to a bridge configuration file (JSON format). "
+            "Defaults to 'config.json' in the current directory. "
+            "When provided, starts the bridge server that aggregates multiple MCP servers. "
+            "This mode ignores all other server configuration options."
+        ),
+    )
 
     mcp_server_group = parser.add_argument_group("SSE server options")
     mcp_server_group.add_argument(
         "--port",
         type=int,
-        default=0,
-        help="Port to expose an SSE server on. Default is a random port",
+        default=8080,
+        help="Port to expose an SSE server on. Default is 8080",
     )
     mcp_server_group.add_argument(
         "--host",
@@ -209,6 +252,11 @@ def _setup_logging(*, debug: bool) -> logging.Logger:
         level=logging.DEBUG if debug else logging.INFO,
         format="[%(levelname)1.1s %(asctime)s.%(msecs).03d %(name)s] %(message)s",
     )
+    
+    # Suppress noisy asyncio errors during shutdown
+    asyncio_logger = logging.getLogger('asyncio')
+    asyncio_logger.setLevel(logging.CRITICAL)
+    
     return logging.getLogger(__name__)
 
 
@@ -338,13 +386,58 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
     )
 
 
+
 def main() -> None:
     """Start the client using asyncio."""
     parser = _setup_argument_parser()
     args_parsed = parser.parse_args()
     logger = _setup_logging(debug=args_parsed.debug)
 
-    # Validate required arguments
+    # Handle bridge mode first (takes precedence over all other options)
+    # Check if config file exists (especially for default config.json)
+    if not os.path.exists(args_parsed.bridge_config):
+        if args_parsed.bridge_config == "config.json":
+            # Default config.json doesn't exist, provide helpful guidance
+            logger.info("No config.json found in current directory.")
+            logger.info("To get started with MCP Foxxy Bridge, you need a configuration file.")
+            logger.info("You can:")
+            logger.info("  1. Copy an example: cp docs/examples/basic-config.json config.json")
+            logger.info("  2. Create a minimal config:")
+            logger.info('     echo \'{"servers": {"filesystem": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "./"]}}}\' > config.json')
+            logger.info("  3. Use a different config: mcp-foxxy-bridge --bridge-config path/to/your/config.json")
+            logger.info("  4. See available examples in docs/examples/ directory")
+            logger.info("")
+            logger.info("For more help, see: https://github.com/billyjbryant/mcp-foxxy-bridge/blob/main/docs/configuration.md")
+            sys.exit(1)
+        else:
+            # Custom config file doesn't exist
+            logger.error("Bridge configuration file not found: %s", args_parsed.bridge_config)
+            sys.exit(1)
+            
+    logger.info("Starting in bridge mode with config: %s", args_parsed.bridge_config)
+    
+    # Load bridge configuration
+    bridge_base_env: dict[str, str] = {}
+    if args_parsed.pass_environment:
+        bridge_base_env.update(os.environ)
+    
+    try:
+        bridge_config = load_bridge_config_from_file(args_parsed.bridge_config, bridge_base_env)
+    except Exception as e:
+        logger.error("Failed to load bridge configuration: %s", str(e))
+        sys.exit(1)
+    
+    # Create MCP server settings and run the bridge server
+    mcp_settings = _create_mcp_settings(args_parsed)
+    try:
+        asyncio.run(run_bridge_server(mcp_settings, bridge_config))
+    except KeyboardInterrupt:
+        logger.info("Received interrupt signal, shutting down gracefully...")
+    except Exception as e:
+        logger.error("Bridge server error: %s", str(e))
+    return
+
+    # Validate required arguments for non-bridge mode
     if (
         not args_parsed.command_or_url
         and not args_parsed.named_server_definitions
@@ -353,7 +446,7 @@ def main() -> None:
         parser.print_help()
         logger.error(
             "Either a command_or_url for a default server or at least one --named-server "
-            "(or --named-server-config) must be provided for stdio mode.",
+            "(or --named-server-config or --bridge-config) must be provided for stdio mode.",
         )
         sys.exit(1)
 

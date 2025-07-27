@@ -1,4 +1,4 @@
-"""Tests for the mcp-proxy module.
+"""Tests for the mcp-foxxy-bridge module.
 
 Tests are running in two modes:
 - One where the server is exercised directly though an in memory client, just to
@@ -22,7 +22,7 @@ from mcp.shared.exceptions import McpError
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import AnyUrl
 
-from mcp_proxy.proxy_server import create_proxy_server
+from mcp_foxxy_bridge.proxy_server import create_proxy_server
 
 TOOL_INPUT_SCHEMA = {"type": "object", "properties": {"input1": {"type": "string"}}}
 

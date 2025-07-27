@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 from mcp.client.stdio import StdioServerParameters
 
-from mcp_proxy.config_loader import load_named_server_configs_from_file
+from mcp_foxxy_bridge.config_loader import load_named_server_configs_from_file
 
 
 @pytest.fixture
@@ -126,7 +126,7 @@ def test_load_example_fetch_config_if_uvx_exists() -> None:
         pytest.skip("uvx command not found in PATH, skipping test for example config.")
 
     # Assuming the test is run from the root of the repository
-    example_config_path = Path(__file__).parent.parent / "config_example.json"
+    example_config_path = Path(__file__).parent.parent / "bridge_config_example.json"
 
     if not example_config_path.exists():
         pytest.fail(
@@ -157,7 +157,7 @@ def test_invalid_config_format_missing_mcpservers(
         load_named_server_configs_from_file(tmp_config_path, {})
 
 
-@patch("mcp_proxy.config_loader.logger")
+@patch("mcp_foxxy_bridge.config_loader.logger")
 def test_invalid_server_entry_not_dict(
     mock_logger: object,
     create_temp_config_file: Callable[[dict], str],
@@ -175,7 +175,7 @@ def test_invalid_server_entry_not_dict(
     )
 
 
-@patch("mcp_proxy.config_loader.logger")
+@patch("mcp_foxxy_bridge.config_loader.logger")
 def test_server_entry_missing_command(
     mock_logger: object,
     create_temp_config_file: Callable[[dict], str],
@@ -191,7 +191,7 @@ def test_server_entry_missing_command(
     )
 
 
-@patch("mcp_proxy.config_loader.logger")
+@patch("mcp_foxxy_bridge.config_loader.logger")
 def test_server_entry_invalid_args_type(
     mock_logger: object,
     create_temp_config_file: Callable[[dict], str],

@@ -22,12 +22,57 @@ ADD . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 
-# Final stage with explicit platform specification
-FROM python:3.12-alpine
+# Final stage with Node.js support for MCP servers
+FROM node:20-alpine
 
+# Install Python and other dependencies
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    git \
+    curl \
+    && ln -sf python3 /usr/bin/python
+
+# Create app user
+RUN addgroup -g 1001 -S app && \
+    adduser -S app -u 1001 -G app
+
+# Copy the virtual environment from build stage
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
+
+# Create app directory and set ownership
+WORKDIR /app
+RUN chown -R app:app /app
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-ENTRYPOINT ["mcp-proxy"]
+# Install commonly used MCP servers globally
+RUN npm install -g \
+    @modelcontextprotocol/server-github \
+    @modelcontextprotocol/server-filesystem \
+    @modelcontextprotocol/server-brave-search
+
+# Install uv for dynamic MCP server installation (uvx is included with uv)
+RUN pip install --no-cache-dir uv
+
+# Ensure uv cache directory exists and is writable
+RUN mkdir -p /tmp/uv-cache && chmod 777 /tmp/uv-cache
+ENV UV_CACHE_DIR=/tmp/uv-cache
+
+# Switch to app user
+USER app
+
+# Create config directory
+RUN mkdir -p /app/config
+
+# Expose the default bridge port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/status || exit 1
+
+# Default command
+ENTRYPOINT ["mcp-foxxy-bridge"]
+CMD ["--port", "8080", "--host", "0.0.0.0"]

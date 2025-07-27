@@ -1,0 +1,93 @@
+{
+  "mcpServers": {
+    "fetch": {
+      "enabled": true,
+      "timeout": 60,
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "transportType": "stdio",
+      "retryAttempts": 3,
+      "retryDelay": 1000,
+      "healthCheck": {
+        "enabled": true,
+        "interval": 30000,
+        "timeout": 5000
+      },
+      "toolNamespace": "fetch",
+      "priority": 100,
+      "tags": ["web", "http", "fetch"]
+    },
+    "github": {
+      "enabled": true,
+      "timeout": 60,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "transportType": "stdio",
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "retryAttempts": 3,
+      "retryDelay": 1000,
+      "healthCheck": {
+        "enabled": true,
+        "interval": 30000,
+        "timeout": 5000
+      },
+      "toolNamespace": "github",
+      "priority": 100,
+      "tags": ["github", "git", "version-control"]
+    },
+    "filesystem": {
+      "enabled": true,
+      "timeout": 30,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user"],
+      "transportType": "stdio",
+      "retryAttempts": 2,
+      "retryDelay": 500,
+      "healthCheck": {
+        "enabled": true,
+        "interval": 45000,
+        "timeout": 3000
+      },
+      "toolNamespace": "fs",
+      "resourceNamespace": "fs",
+      "priority": 50,
+      "tags": ["filesystem", "files", "local"]
+    },
+    "brave_search": {
+      "enabled": false,
+      "timeout": 30,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "transportType": "stdio",
+      "env": {
+        "BRAVE_API_KEY": "${BRAVE_API_KEY}"
+      },
+      "retryAttempts": 3,
+      "retryDelay": 2000,
+      "healthCheck": {
+        "enabled": true,
+        "interval": 60000,
+        "timeout": 10000
+      },
+      "toolNamespace": "search",
+      "priority": 200,
+      "tags": ["search", "web", "brave"]
+    }
+  },
+  "bridge": {
+    "conflictResolution": "namespace",
+    "defaultNamespace": true,
+    "aggregation": {
+      "tools": true,
+      "resources": true,
+      "prompts": true
+    },
+    "failover": {
+      "enabled": true,
+      "maxFailures": 3,
+      "recoveryInterval": 60000
+    }
+  }
+}

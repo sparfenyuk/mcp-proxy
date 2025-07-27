@@ -1,7 +1,7 @@
 [project]
-name = "mcp-proxy"
-description = "A MCP server which proxies requests to a remote MCP server over SSE transport."
-authors = [{ name = "Sergey Parfenyuk", email = "sergey.parfenyuk@gmail.com" }]
+name = "mcp-foxxy-bridge"
+description = "A MCP Forward Proxy Bridge designed to be a one-to-many bridge allowing you to use a single MCP server to communicate with many MCP servers transparently."
+authors = [{ name = "Billy Bryant", email = "billy@billybryant.dev" }]
 license = { file = "LICENSE" }
 readme = "README.md"
 classifiers = [
@@ -10,7 +10,7 @@ classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Information Technology",
     "Intended Audience :: System Administrators",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Operating System :: Unix",
@@ -25,26 +25,29 @@ classifiers = [
     "Topic :: Utilities",
     "Typing :: Typed",
 ]
-version = "0.8.2"
+dynamic = ["version"]
 requires-python = ">=3.10"
-dependencies = ["mcp>=1.8.0,<2.0.0", "uvicorn>=0.34.0"]
+dependencies = ["mcp>=1.8.0,<2.0.0", "uvicorn>=0.34.0", "jsonschema>=4.0.0"]
 
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
 [project.urls]
-Homepage = "https://github.com/sparfenyuk/mcp-proxy"
-Source = "https://github.com/sparfenyuk/mcp-proxy"
-Documentation = "https://github.com/sparfenyuk/mcp-proxy"
-Changelog = "https://github.com/sparfenyuk/mcp-proxy/releases"
+Homepage = "https://github.com/billyjbryant/mcp-foxxy-bridge"
+Source = "https://github.com/billyjbryant/mcp-foxxy-bridge"
+Documentation = "https://github.com/billyjbryant/mcp-foxxy-bridge"
+Changelog = "https://github.com/billyjbryant/mcp-foxxy-bridge/releases"
 
 [project.scripts]
-mcp-proxy = "mcp_proxy.__main__:main"
-mcp-reverse-proxy = "mcp_proxy.__main__:client"
+mcp-foxxy-bridge = "mcp_foxxy_bridge.__main__:main"
+mcp-foxxy-bridge-reverse = "mcp_foxxy_bridge.__main__:client"
 
-[tool.setuptools.package-data]
-"*" = ["py.typed"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_foxxy_bridge"]
+
+[tool.hatch.version]
+path = "VERSION"
 
 [tool.uv]
 dev-dependencies = [
@@ -52,6 +55,8 @@ dev-dependencies = [
     "pytest-asyncio>=0.25.0",
     "coverage>=7.6.0",
     "mypy>=1.0.0",
+    "hatch>=1.12.0",
+    "ruff>=0.7.0",
 ]
 
 [tool.coverage.run]

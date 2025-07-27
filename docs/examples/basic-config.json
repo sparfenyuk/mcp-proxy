@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "github": {
+      "enabled": true,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"
+      },
+      "toolNamespace": "github"
+    },
+    "filesystem": {
+      "enabled": true,
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "${HOME}/Documents"],
+      "toolNamespace": "fs",
+      "resourceNamespace": "fs"
+    },
+    "fetch": {
+      "enabled": true,
+      "command": "uvx",
+      "args": ["mcp-server-fetch"],
+      "toolNamespace": "fetch"
+    }
+  },
+  "bridge": {
+    "conflictResolution": "namespace"
+  }
+}

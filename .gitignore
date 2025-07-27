@@ -169,3 +169,14 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Com folder and files
+.com/
+
+# Claude folder and files
+.claude/
+CLAUDE.md
+
+# Cursor folder and files
+.cursor/
+CURSOR.md

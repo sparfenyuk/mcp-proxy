@@ -1,0 +1,201 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MCP Foxxy Bridge Configuration Schema",
+  "description": "Configuration schema for MCP Foxxy Bridge one-to-many server connectivity",
+  "type": "object",
+  "properties": {
+    "mcpServers": {
+      "type": "object",
+      "description": "Collection of MCP servers to bridge",
+      "patternProperties": {
+        "^[a-zA-Z0-9_-]+$": {
+          "type": "object",
+          "description": "MCP server configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether this server is enabled"
+            },
+            "command": {
+              "type": "string",
+              "description": "Command to execute the MCP server"
+            },
+            "args": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": [],
+              "description": "Command line arguments for the MCP server"
+            },
+            "env": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Environment variables for the MCP server"
+            },
+            "timeout": {
+              "type": "number",
+              "default": 60,
+              "description": "Connection timeout in seconds"
+            },
+            "transportType": {
+              "type": "string",
+              "enum": ["stdio"],
+              "default": "stdio",
+              "description": "Transport type for the MCP server"
+            },
+            "retryAttempts": {
+              "type": "number",
+              "default": 3,
+              "description": "Number of retry attempts on connection failure"
+            },
+            "retryDelay": {
+              "type": "number",
+              "default": 1000,
+              "description": "Delay between retry attempts in milliseconds"
+            },
+            "healthCheck": {
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "default": true,
+                  "description": "Whether to perform health checks"
+                },
+                "interval": {
+                  "type": "number",
+                  "default": 30000,
+                  "description": "Health check interval in milliseconds"
+                },
+                "timeout": {
+                  "type": "number",
+                  "default": 5000,
+                  "description": "Health check timeout in milliseconds"
+                }
+              },
+              "default": {
+                "enabled": true,
+                "interval": 30000,
+                "timeout": 5000
+              }
+            },
+            "toolNamespace": {
+              "type": "string",
+              "description": "Optional namespace prefix for tools from this server"
+            },
+            "resourceNamespace": {
+              "type": "string",
+              "description": "Optional namespace prefix for resources from this server"
+            },
+            "promptNamespace": {
+              "type": "string",
+              "description": "Optional namespace prefix for prompts from this server"
+            },
+            "priority": {
+              "type": "number",
+              "default": 100,
+              "description": "Priority for conflict resolution (lower = higher priority)"
+            },
+            "tags": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "default": [],
+              "description": "Tags for organizing and filtering servers"
+            }
+          },
+          "required": ["command"],
+          "additionalProperties": false
+        }
+      }
+    },
+    "bridge": {
+      "type": "object",
+      "description": "Bridge-specific configuration",
+      "properties": {
+        "conflictResolution": {
+          "type": "string",
+          "enum": ["priority", "namespace", "first", "error"],
+          "default": "namespace",
+          "description": "How to handle tool/resource name conflicts"
+        },
+        "defaultNamespace": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether to add server name as namespace by default"
+        },
+        "aggregation": {
+          "type": "object",
+          "properties": {
+            "tools": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether to aggregate tools from all servers"
+            },
+            "resources": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether to aggregate resources from all servers"
+            },
+            "prompts": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether to aggregate prompts from all servers"
+            }
+          },
+          "default": {
+            "tools": true,
+            "resources": true,
+            "prompts": true
+          }
+        },
+        "failover": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": true,
+              "description": "Whether to enable failover for failed servers"
+            },
+            "maxFailures": {
+              "type": "number",
+              "default": 3,
+              "description": "Maximum failures before marking server as unavailable"
+            },
+            "recoveryInterval": {
+              "type": "number",
+              "default": 60000,
+              "description": "Interval to attempt recovery in milliseconds"
+            }
+          },
+          "default": {
+            "enabled": true,
+            "maxFailures": 3,
+            "recoveryInterval": 60000
+          }
+        }
+      },
+      "default": {
+        "conflictResolution": "namespace",
+        "defaultNamespace": true,
+        "aggregation": {
+          "tools": true,
+          "resources": true,
+          "prompts": true
+        },
+        "failover": {
+          "enabled": true,
+          "maxFailures": 3,
+          "recoveryInterval": 60000
+        }
+      }
+    }
+  },
+  "required": ["mcpServers"],
+  "additionalProperties": false
+}

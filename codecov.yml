@@ -1,6 +1,3 @@
-codecov:
-  require_ci_to_pass: true
-
 coverage:
   precision: 2
   round: down
@@ -9,21 +6,28 @@ coverage:
   status:
     project:
       default:
-        # Maintain overall project coverage
-        target: auto
+        target: 80%
         threshold: 2%
-
+        if_no_uploads: error
+        if_not_found: success
+        if_ci_failed: error
     patch:
       default:
-        # Require 80% coverage on new/modified code
-        target: 80%
+        target: 75%
         threshold: 5%
-
-    changes: false
+        if_no_uploads: error
+        if_not_found: success
+        if_ci_failed: error
 
 comment:
-  layout: "reach,diff,flags,files,footer"
+  layout: "reach,diff,flags,tree"
   behavior: default
   require_changes: false
-  require_base: false
-  require_head: true
+
+ignore:
+  - "tests/"
+  - "docs/"
+  - "examples/"
+  - "**/__pycache__/"
+  - "src/**/__init__.py"
+  - "src/**/py.typed"

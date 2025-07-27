@@ -1,0 +1,23 @@
+# <type>(<scope>): <subject>
+#
+# <body>
+#
+# <footer>
+
+# Type should be one of the following:
+# * feat (new feature)
+# * fix (bug fix)
+# * docs (documentation)
+# * style (formatting, missing semi colons, etc; no code change)
+# * refactor (refactoring production code)
+# * test (adding tests, refactoring test; no production code change)
+# * chore (updating build tasks, package manager configs, etc; no production code change)
+
+# Scope is just the scope of the change. Something like (admin) or (teacher).
+
+# Subject should use impertivite tone and say what you did.
+# The body should go into detail about changes made.
+# The footer should contain any JIRA (or other tool) issue references or actions.
+
+# For a full example of how to write a good commit message, check out
+# https://www.conventionalcommits.org/

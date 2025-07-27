@@ -1,425 +1,449 @@
-# mcp-proxy
+# MCP Foxxy Bridge
 
-![GitHub License](https://img.shields.io/github/license/sparfenyuk/mcp-proxy)
-![PyPI - Python Version](https://img.shields.io/pypi/pyversions/mcp-proxy)
-![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-proxy)
-[![codecov](https://codecov.io/gh/sparfenyuk/mcp-proxy/graph/badge.svg?token=31VV9L7AZQ)](https://codecov.io/gh/sparfenyuk/mcp-proxy)
-[![smithery badge](https://smithery.ai/badge/mcp-proxy)](https://smithery.ai/server/mcp-proxy)
+![GitHub License](https://img.shields.io/github/license/billyjbryant/mcp-foxxy-bridge)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/mcp-foxxy-bridge)
+![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-foxxy-bridge)
+[![codecov](https://codecov.io/gh/billyjbryant/mcp-foxxy-bridge/graph/badge.svg?token=31VV9L7AZQ)](https://codecov.io/gh/billyjbryant/mcp-foxxy-bridge)
 
-- [mcp-proxy](#mcp-proxy)
-  - [About](#about)
-  - [1. stdio to SSE/StreamableHTTP](#1-stdio-to-ssestreamablehttp)
-    - [1.1 Configuration](#11-configuration)
-    - [1.2 Example usage](#12-example-usage)
-  - [2. SSE to stdio](#2-sse-to-stdio)
-    - [2.1 Configuration](#21-configuration)
-    - [2.2 Example usage](#22-example-usage)
-  - [Named Servers](#named-servers)
-  - [Installation](#installation)
-    - [Installing via Smithery](#installing-via-smithery)
-    - [Installing via PyPI](#installing-via-pypi)
-    - [Installing via Github repository (latest)](#installing-via-github-repository-latest)
-    - [Installing as container](#installing-as-container)
-    - [Troubleshooting](#troubleshooting)
-  - [Extending the container image](#extending-the-container-image)
-  - [Docker Compose Setup](#docker-compose-setup)
-  - [Command line arguments](#command-line-arguments)
-    - [Example config file](#example-config-file)
-  - [Testing](#testing)
+**A forward proxy bridge for the Model Context Protocol (MCP) that aggregates
+multiple MCP servers into a single endpoint.**
 
-## About
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Why Use MCP Foxxy Bridge?](#why-use-mcp-foxxy-bridge)
+- [Architecture](#architecture)
+- [Configuration](#configuration)
+- [Usage Examples](#usage-examples)
+- [Deployment](#deployment)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
 
-The `mcp-proxy` is a tool that lets you switch between server transports. There are two supported modes:
+## Installation
 
-1. stdio to SSE/StreamableHTTP
-2. SSE to stdio
+### UV (Recommended)
 
-## 1. stdio to SSE/StreamableHTTP
+```bash
+# Install from PyPI
+uv tool install mcp-foxxy-bridge
 
-Run a proxy server from stdio that connects to a remote SSE server.
+# Or install latest from GitHub
+uv tool install git+https://github.com/billyjbryant/mcp-foxxy-bridge
 
-This mode allows clients like Claude Desktop to communicate to a remote server over SSE even though it is not supported
-natively.
-
-```mermaid
-graph LR
-    A["Claude Desktop"] <--> |stdio| B["mcp-proxy"]
-    B <--> |SSE| C["External MCP Server"]
-
-    style A fill:#ffe6f9,stroke:#333,color:black,stroke-width:2px
-    style B fill:#e6e6ff,stroke:#333,color:black,stroke-width:2px
-    style C fill:#e6ffe6,stroke:#333,color:black,stroke-width:2px
+# Run immediately
+mcp-foxxy-bridge --help
 ```
 
-### 1.1 Configuration
+### Alternative Methods
 
-This mode requires providing the URL of the MCP Server's SSE endpoint as the program’s first argument. If the server uses Streamable HTTP transport, make sure to enforce it on the `mcp-proxy` side by passing `--transport=streamablehttp`.
+```bash
+# With pipx (from PyPI)
+pipx install mcp-foxxy-bridge
 
-Arguments
+# With pip (from PyPI)
+pip install mcp-foxxy-bridge
 
-| Name             | Required | Description                                                                                                       | Example                                       |
-| ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| `command_or_url` | Yes      | The MCP server SSE endpoint to connect to                                                                         | http://example.io/sse                         |
-| `--headers`      | No       | Headers to use for the MCP server SSE connection                                                                  | Authorization 'Bearer my-secret-access-token' |
-| `--transport`    | No       | Decides which transport protocol to use when connecting to an MCP server. Can be either 'sse' or 'streamablehttp' | streamablehttp                                |
+# With Docker
+docker run -p 8080:8080 ghcr.io/billyjbryant/mcp-foxxy-bridge:latest --help
+```
 
-Environment Variables
+## Quick Start
 
-| Name               | Required | Description                                                                  | Example    |
-| ------------------ | -------- | ---------------------------------------------------------------------------- | ---------- |
-| `API_ACCESS_TOKEN` | No       | Can be used instead of `--headers Authorization 'Bearer <API_ACCESS_TOKEN>'` | YOUR_TOKEN |
+1. **Create a configuration file** (`config.json`) or use the included default:
 
-### 1.2 Example usage
+   ```json
+   {
+     "mcpServers": {
+       "filesystem": {
+         "command": "npx",
+         "args": ["-y", "@modelcontextprotocol/server-filesystem", "./"]
+       }
+     }
+   }
+   ```
 
-`mcp-proxy` is supposed to be started by the MCP Client, so the configuration must be done accordingly.
+   Or copy from examples:
+   ```bash
+   cp docs/examples/basic-config.json config.json
+   ```
 
-For Claude Desktop, the configuration entry can look like this:
+2. **Start the bridge** (uses `config.json` by default):
+
+   ```bash
+   mcp-foxxy-bridge --port 8080
+   ```
+
+   Or specify a different config:
+   ```bash
+   mcp-foxxy-bridge --bridge-config path/to/your/config.json --port 8080
+   ```
+
+3. **Connect your AI tools** to `http://localhost:8080/sse`
+
+   Example Claude Desktop configuration:
+
+   ```json
+   {
+     "mcpServers": {
+       "foxxy-bridge": {
+         "command": "mcp-foxxy-bridge",
+         "args": ["http://localhost:8080/sse"]
+       }
+     }
+   }
+   ```
+
+## Why Use MCP Foxxy Bridge?
+
+### The Problem
+
+As an MCP user, you likely use multiple AI tools (Claude Desktop, VS Code,
+custom applications), each requiring its own MCP server configuration. This
+leads to:
+
+- **Configuration Duplication**: Same MCP servers configured multiple times
+- **Management Overhead**: Adding/removing servers requires updating multiple
+  configurations
+- **Inconsistency**: Different AI tools may have different available tools
+- **Complexity**: Each AI tool needs individual MCP server management
+
+### The Solution
+
+MCP Foxxy Bridge acts as a **forward proxy** that:
+
+- **Centralizes Configuration**: Configure all MCP servers in one place
+- **Aggregates Tools**: Combine tools from multiple MCP servers into a single
+  interface
+- **Simplifies Management**: Add/remove MCP servers once, available everywhere
+- **Provides Transparency**: AI tools interact with the bridge as if it were a
+  single MCP server
+
+### Key Benefits
+
+- **🎯 One-to-Many Architecture**: Single bridge → Multiple MCP servers
+- **🔧 Tool Aggregation**: All tools from all servers in one interface
+- **🏷️ Namespace Management**: Automatic prefixing prevents tool name conflicts
+- **🌍 Environment Variables**: Secure `${VAR_NAME}` expansion in configurations
+- **📊 Health Monitoring**: Built-in status endpoint shows server health
+- **🐳 Multiple Deployment Options**: Local process, Docker, or UV tool
+- **🔄 Graceful Failover**: Individual server failures don't break the bridge
+
+## Architecture
+
+```mermaid
+graph TB
+    subgraph "AI Tools"
+        C1[Claude Desktop]
+        C2[VS Code Extensions]
+        C3[Custom Applications]
+    end
+    
+    subgraph "MCP Foxxy Bridge"
+        B[Bridge Server<br/>Port 8080<br/>/sse endpoint]
+    end
+    
+    subgraph "MCP Servers"
+        S1[GitHub Server<br/>github.*]
+        S2[Filesystem Server<br/>fs.*]
+        S3[Fetch Server<br/>fetch.*]
+        S4[Custom Servers<br/>custom.*]
+    end
+    
+    C1 --> B
+    C2 --> B
+    C3 --> B
+    
+    B --> S1
+    B --> S2
+    B --> S3
+    B --> S4
+    
+    style B fill:#e1f5fe,stroke:#0277bd,stroke-width:2px
+    style C1 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style C2 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style C3 fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    style S1 fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    style S2 fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    style S3 fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+    style S4 fill:#e8f5e8,stroke:#2e7d32,stroke-width:2px
+```
+
+## Configuration
+
+### Basic Configuration
+
+The bridge uses JSON configuration files with two main sections:
 
 ```json
 {
   "mcpServers": {
-    "mcp-proxy": {
-      "command": "mcp-proxy",
-      "args": [
-        "http://example.io/sse"
-      ],
-      "env": {
-        "API_ACCESS_TOKEN": "access-token"
+    // Individual MCP server configurations
+  },
+  "bridge": {
+    // Bridge-wide settings
+  }
+}
+```
+
+### Server Configuration Options
+
+```json
+{
+  "mcpServers": {
+    "server_name": {
+      "enabled": true,                    // Enable/disable server
+      "command": "npx",                   // Command to run
+      "args": ["-y", "server-package"],   // Command arguments
+      "env": {                            // Environment variables
+        "API_TOKEN": "${SECRET_TOKEN}"    // Supports ${VAR} expansion
+      },
+      "timeout": 60,                      // Connection timeout (seconds)
+      "retryAttempts": 3,                 // Retry attempts on failure
+      "retryDelay": 1000,                 // Delay between retries (ms)
+      "toolNamespace": "prefix",          // Tool name prefix
+      "priority": 100,                    // Server priority (lower = higher)
+      "tags": ["web", "api"],             // Metadata tags
+      "healthCheck": {
+        "enabled": true,                  // Enable health monitoring
+        "interval": 30000,                // Health check interval (ms)
+        "timeout": 5000                   // Health check timeout (ms)
       }
     }
   }
 }
 ```
 
-## 2. SSE to stdio
-
-Run a proxy server exposing a SSE server that connects to a local stdio server.
-
-This allows remote connections to the local stdio server. The `mcp-proxy` opens a port to listen for SSE requests,
-spawns a local stdio server that handles MCP requests.
-
-```mermaid
-graph LR
-    A["LLM Client"] <-->|SSE| B["mcp-proxy"]
-    B <-->|stdio| C["Local MCP Server"]
-
-    style A fill:#ffe6f9,stroke:#333,color:black,stroke-width:2px
-    style B fill:#e6e6ff,stroke:#333,color:black,stroke-width:2px
-    style C fill:#e6ffe6,stroke:#333,color:black,stroke-width:2px
-```
-
-### 2.1 Configuration
-
-This mode requires the `--sse-port` argument to be set. The `--sse-host` argument can be set to specify the host IP
-address that the SSE server will listen on. Additional environment variables can be passed to the local stdio server
-using the `--env` argument. The command line arguments for the local stdio server must be passed after the `--`
-separator.
-
-Arguments
-
-| Name                                 | Required                   | Description                                                                                 | Example                                     |
-|--------------------------------------|----------------------------|---------------------------------------------------------------------------------------------|---------------------------------------------|
-| `command_or_url`                     | Yes                        | The command to spawn the MCP stdio server                                                   | uvx mcp-server-fetch                        |
-| `--port`                             | No, random available       | The MCP server port to listen on                                                            | 8080                                        |
-| `--host`                             | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on                                      | 0.0.0.0                                     |
-| `--env`                              | No                         | Additional environment variables to pass to the MCP stdio server. Can be used multiple times. | FOO BAR                                     |
-| `--cwd`                              | No                         | The working directory to pass to the MCP stdio server process.                              | /tmp                                        |
-| `--pass-environment`                 | No                         | Pass through all environment variables when spawning the server                             | --no-pass-environment                       |
-| `--allow-origin`                     | No                         | Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed. | --allow-origin "\*"                           |
-| `--stateless`                        | No                         | Enable stateless mode for streamable http transports. Default is False                      | --no-stateless                              |
-| `--named-server NAME COMMAND_STRING` | No                         | Defines a named stdio server.                                                               | --named-server fetch 'uvx mcp-server-fetch' |
-| `--named-server-config FILE_PATH`    | No                         | Path to a JSON file defining named stdio servers.                                           | --named-server-config /path/to/servers.json |
-| `--sse-port` (deprecated)            | No, random available       | The SSE server port to listen on                                                            | 8080                                        |
-| `--sse-host` (deprecated)            | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on                                      | 0.0.0.0                                     |
-
-### 2.2 Example usage
-
-To start the `mcp-proxy` server that listens on port 8080 and connects to the local MCP server:
-
-```bash
-# Start the MCP server behind the proxy
-mcp-proxy uvx mcp-server-fetch
-
-# Start the MCP server behind the proxy with a custom port
-# (deprecated) mcp-proxy --sse-port=8080 uvx mcp-server-fetch
-mcp-proxy --port=8080 uvx mcp-server-fetch
-
-# Start the MCP server behind the proxy with a custom host and port
-# (deprecated) mcp-proxy --sse-host=0.0.0.0 --sse-port=8080 uvx mcp-server-fetch
-mcp-proxy --host=0.0.0.0 --port=8080 uvx mcp-server-fetch
-
-# Start the MCP server behind the proxy with a custom user agent
-# Note that the `--` separator is used to separate the `mcp-proxy` arguments from the `mcp-server-fetch` arguments
-# (deprecated) mcp-proxy --sse-port=8080 -- uvx mcp-server-fetch --user-agent=YourUserAgent
-mcp-proxy --port=8080 -- uvx mcp-server-fetch --user-agent=YourUserAgent
-
-# Start multiple named MCP servers behind the proxy
-mcp-proxy --port=8080 --named-server fetch 'uvx mcp-server-fetch' --named-server fetch2 'uvx mcp-server-fetch'
-
-# Start multiple named MCP servers using a configuration file
-mcp-proxy --port=8080 --named-server-config ./servers.json
-```
-
-## Named Servers
-
-- `NAME` is used in the URL path `/servers/NAME/`.
-- `COMMAND_STRING` is the command to start the server (e.g., 'uvx mcp-server-fetch').
-  - Can be used multiple times.
-  - This argument is ignored if `--named-server-config` is used.
-- `FILE_PATH` - If provided, this is the exclusive source for named servers, and `--named-server` CLI arguments are ignored.
-
-If a default server is specified (the `command_or_url` argument without `--named-server` or `--named-server-config`), it will be accessible at the root paths (e.g., `http://127.0.0.1:8080/sse`).
-
-Named servers (whether defined by `--named-server` or `--named-server-config`) will be accessible under `/servers/<server-name>/` (e.g., `http://127.0.0.1:8080/servers/fetch1/sse`).
-The `/status` endpoint provides global status.
-
-**JSON Configuration File Format for `--named-server-config`:**
-
-The JSON file should follow this structure:
+### Bridge Configuration Options
 
 ```json
 {
-  "mcpServers": {
-    "fetch": {
-      "disabled": false,
-      "timeout": 60,
-      "command": "uvx",
-      "args": [
-        "mcp-server-fetch"
-      ],
-      "transportType": "stdio"
+  "bridge": {
+    "conflictResolution": "namespace",      // How to handle name conflicts
+    "defaultNamespace": true,               // Use server name as namespace
+    "aggregation": {
+      "tools": true,                        // Aggregate tools
+      "resources": true,                    // Aggregate resources  
+      "prompts": true                       // Aggregate prompts
     },
-    "github": {
-      "timeout": 60,
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-github"
-      ],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_TOKEN>"
-      },
-      "transportType": "stdio"
+    "failover": {
+      "enabled": true,                      // Enable automatic failover
+      "maxFailures": 3,                     // Max failures before marking failed
+      "recoveryInterval": 60000             // Recovery attempt interval (ms)
     }
   }
 }
 ```
 
-- `mcpServers`: A dictionary where each key is the server name (used in the URL path, e.g., `/servers/fetch/`) and the value is an object defining the server.
-- `command`: (Required) The command to execute for the stdio server.
-- `args`: (Optional) A list of arguments for the command. Defaults to an empty list.
-- `enabled`: (Optional) If `false`, this server definition will be skipped. Defaults to `true`.
-- `timeout` and `transportType`: These fields are present in standard MCP client configurations but are currently **ignored** by `mcp-proxy` when loading named servers. The transport type is implicitly "stdio".
+### Environment Variable Expansion
 
-## Installation
+Securely reference environment variables in configurations:
 
-### Installing via Smithery
+```json
+{
+  "env": {
+    "GITHUB_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}",
+    "API_URL": "${API_ENDPOINT:https://api.default.com}",
+    "DEBUG": "${DEBUG_MODE:false}"
+  }
+}
+```
 
-To install MCP Proxy for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-proxy):
+Syntax:
+- `${VAR_NAME}` - Required variable (empty string if not found)
+- `${VAR_NAME:default}` - Variable with default value
+
+## Usage Examples
+
+### Command Line Usage
 
 ```bash
-npx -y @smithery/cli install mcp-proxy --client claude
+# Start with configuration file
+mcp-foxxy-bridge --bridge-config config.json --port 8080
+
+# Start with inline server definitions
+mcp-foxxy-bridge --port 8080 \\
+  --named-server fetch 'uvx mcp-server-fetch' \\
+  --named-server github 'npx -y @modelcontextprotocol/server-github'
+
+# Enable debug logging
+mcp-foxxy-bridge --bridge-config config.json --debug
+
+# Bind to all interfaces (for network access)
+mcp-foxxy-bridge --bridge-config config.json --host 0.0.0.0
 ```
 
-### Installing via PyPI
+### AI Tool Integration
 
-The stable version of the package is available on the PyPI repository. You can install it using the following command:
+#### Claude Desktop
 
-```bash
-# Option 1: With uv (recommended)
-uv tool install mcp-proxy
-
-# Option 2: With pipx (alternative)
-pipx install mcp-proxy
-```
-
-Once installed, you can run the server using the `mcp-proxy` command. See configuration options for each mode above.
-
-### Installing via Github repository (latest)
-
-The latest version of the package can be installed from the git repository using the following command:
-
-```bash
-uv tool install git+https://github.com/sparfenyuk/mcp-proxy
-```
-
-> [!NOTE]
-> If you have already installed the server, you can update it using `uv tool upgrade --reinstall` command.
-
-> [!NOTE]
-> If you want to delete the server, use the `uv tool uninstall mcp-proxy` command.
-
-### Installing as container
-
-Starting from version 0.3.2, it's possible to pull and run the corresponding container image:
-
-```bash
-docker run -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
-```
-
-### Troubleshooting
-
-- **Problem**: Claude Desktop can't start the server: ENOENT code in the logs
-
-  **Solution**: Try to use the full path to the binary. To do so, open a terminal and run the command`where mcp-proxy` (
-  macOS, Linux) or `where.exe mcp-proxy` (Windows). Then, use the output path as a value for 'command' attribute:
-  ```json
-    "fetch": {
-      "command": "/full/path/to/bin/mcp-proxy",
-      "args": [
-        "http://localhost:8932/sse"
-      ]
-    }
-  ```
-
-## Extending the container image
-
-You can extend the `mcp-proxy` container image to include additional executables. For instance, `uv` is not included by
-default, but you can create a custom image with it:
-
-```Dockerfile
-# file: mcp-proxy.Dockerfile
-
-FROM ghcr.io/sparfenyuk/mcp-proxy:latest
-
-# Install the 'uv' package
-RUN python3 -m ensurepip && pip install --no-cache-dir uv
-
-ENV PATH="/usr/local/bin:$PATH" \
-    UV_PYTHON_PREFERENCE=only-system
-
-ENTRYPOINT [ "mcp-proxy" ]
-```
-
-## Docker Compose Setup
-
-With the custom Dockerfile, you can define a service in your Docker Compose file:
-
-```yaml
-services:
-  mcp-proxy-custom:
-    build:
-      context: .
-      dockerfile: mcp-proxy.Dockerfile
-    network_mode: host
-    restart: unless-stopped
-    ports:
-      - 8096:8096
-    command: "--pass-environment --port=8096 --sse-host 0.0.0.0 uvx mcp-server-fetch"
-```
-
-> [!NOTE]
-> Don't forget to set `--pass-environment` argument, otherwise you'll end up with the error "No interpreter found in
-> managed installations or search path"
-
-## Command line arguments
-
-```bash
-usage: mcp-proxy [-h] [--version] [-H KEY VALUE] [--transport {sse,streamablehttp}]
-                 [-e KEY VALUE] [--cwd CWD]
-                 [--pass-environment | --no-pass-environment] [--debug | --no-debug]
-                 [--named-server NAME COMMAND_STRING]
-                 [--named-server-config FILE_PATH] [--port PORT] [--host HOST]
-                 [--stateless | --no-stateless] [--sse-port SSE_PORT]
-                 [--sse-host SSE_HOST]
-                 [--allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]]
-                 [command_or_url] [args ...]
-
-Start the MCP proxy in one of two possible modes: as a client or a server.
-
-positional arguments:
-  command_or_url        Command or URL to connect to. When a URL, will run an SSE/StreamableHTTP client. Otherwise, if --named-server is not used, this will be the command for the default stdio client. If --named-server is used, this argument is ignored for stdio mode unless no default server is desired. See corresponding options for more details.
-
-options:
-  -h, --help            show this help message and exit
-  --version             Show the version and exit
-
-SSE/StreamableHTTP client options:
-  -H, --headers KEY VALUE
-                        Headers to pass to the SSE server. Can be used multiple times.
-  --transport {sse,streamablehttp}
-                        The transport to use for the client. Default is SSE.
-
-stdio client options:
-  args                  Any extra arguments to the command to spawn the default server. Ignored if only named servers are defined.
-  -e, --env KEY VALUE   Environment variables used when spawning the default server. Can be used multiple times. For named servers, environment is inherited or passed via --pass-environment.
-  --cwd CWD             The working directory to use when spawning the default server process. Named servers inherit the proxy's CWD.
-  --pass-environment, --no-pass-environment
-                        Pass through all environment variables when spawning all server processes.
-  --debug, --no-debug   Enable debug mode with detailed logging output.
-  --named-server NAME COMMAND_STRING
-                        Define a named stdio server. NAME is for the URL path /servers/NAME/. COMMAND_STRING is a single string with the command and its arguments (e.g., 'uvx mcp-server-fetch --timeout 10'). These servers inherit the proxy's CWD and environment from --pass-environment.
-  --named-server-config FILE_PATH
-                        Path to a JSON configuration file for named stdio servers. If provided, this will be the exclusive source for named server definitions, and any --named-server CLI arguments will be ignored.
-
-SSE server options:
-  --port PORT           Port to expose an SSE server on. Default is a random port
-  --host HOST           Host to expose an SSE server on. Default is 127.0.0.1
-  --stateless, --no-stateless
-                        Enable stateless mode for streamable http transports. Default is False
-  --sse-port SSE_PORT   (deprecated) Same as --port
-  --sse-host SSE_HOST   (deprecated) Same as --host
-  --allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]
-                        Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.
-
-Examples:
-  mcp-proxy http://localhost:8080/sse
-  mcp-proxy --transport streamablehttp http://localhost:8080/mcp
-  mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
-  mcp-proxy --port 8080 -- my-default-command --arg1 value1
-  mcp-proxy --port 8080 --named-server fetch1 'uvx mcp-server-fetch' --named-server tool2 'my-custom-tool --verbose'
-  mcp-proxy --port 8080 --named-server-config /path/to/servers.json
-  mcp-proxy --port 8080 --named-server-config /path/to/servers.json -- my-default-command --arg1
-  mcp-proxy --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE -- my-default-command
-  mcp-proxy --port 8080 --allow-origin='*' -- my-default-command
-```
-
-### Example config file
+Add to `~/.claude/claude_desktop_config.json`:
 
 ```json
 {
   "mcpServers": {
-    "fetch": {
-      "enabled": true,
-      "timeout": 60,
-      "command": "uvx",
-      "args": [
-        "mcp-server-fetch"
-      ],
-      "transportType": "stdio"
-    },
-    "github": {
-      "timeout": 60,
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-github"
-      ],
-      "env": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_TOKEN>"
-      },
-      "transportType": "stdio"
+    "foxxy-bridge": {
+      "command": "mcp-foxxy-bridge",
+      "args": ["http://localhost:8080/sse"]
     }
   }
 }
 ```
 
-## Testing
+#### VS Code or Custom Applications
 
-Check the `mcp-proxy` server by running it with the `mcp-server-fetch` server. You can use
-the [inspector tool](https://modelcontextprotocol.io/docs/tools/inspector) to test the target server.
+Connect MCP clients to the SSE endpoint:
+
+```python
+from mcp.client.sse import sse_client
+from mcp.client.session import ClientSession
+
+async def connect_to_bridge():
+    async with sse_client("http://localhost:8080/sse") as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            return tools
+```
+
+### Health Monitoring
+
+Check bridge and server status:
 
 ```bash
-# Run the stdio server called mcp-server-fetch behind the proxy over SSE
-mcp-proxy --port=8080 uvx mcp-server-fetch &
+# Get status
+curl http://localhost:8080/status
 
-# Connect to the SSE proxy server spawned above using another instance of mcp-proxy given the URL of the SSE server
-mcp-proxy http://127.0.0.1:8080/sse
+# Pretty print with Python
+curl -s http://localhost:8080/status | python -m json.tool
 
-# Send CTRL+C to stop the second server
-
-# Bring the first server to the foreground
-fg
-
-# Send CTRL+C to stop the first server
+# Monitor continuously
+watch -n 5 'curl -s http://localhost:8080/status | jq .'
 ```
+
+## Deployment
+
+### Local Development
+
+```bash
+# Clone and install
+git clone https://github.com/billyjbryant/mcp-foxxy-bridge
+cd mcp-foxxy-bridge
+uv sync
+
+# Run in development mode
+uv run mcp-foxxy-bridge --bridge-config bridge_config_example.json
+```
+
+### Production with UV
+
+```bash
+# Install globally
+uv tool install mcp-foxxy-bridge
+
+# Create systemd service (Linux)
+sudo tee /etc/systemd/system/mcp-bridge.service > /dev/null << 'EOF'
+[Unit]
+Description=MCP Foxxy Bridge
+After=network.target
+
+[Service]
+Type=simple
+User=mcp-bridge
+Group=mcp-bridge
+Environment=GITHUB_TOKEN=your_token
+ExecStart=/home/mcp-bridge/.local/bin/mcp-foxxy-bridge \\
+  --bridge-config /opt/mcp-bridge/config.json --port 8080
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# Enable and start
+sudo systemctl enable mcp-bridge
+sudo systemctl start mcp-bridge
+```
+
+### Docker Deployment
+
+```bash
+# Build image
+docker build -t mcp-foxxy-bridge .
+
+# Run container
+docker run -d \\
+  --name mcp-bridge \\
+  -p 8080:8080 \\
+  -v ./config.json:/app/config/config.json:ro \\
+  -e GITHUB_TOKEN=your_token \\
+  mcp-foxxy-bridge --bridge-config /app/config/config.json
+
+# With Docker Compose
+docker-compose up -d
+```
+
+## Documentation
+
+Comprehensive documentation is available in the `docs/` directory:
+
+- **[Installation Guide](docs/installation.md)** - Detailed installation methods
+- **[Configuration Guide](docs/configuration.md)** - Complete configuration
+  reference
+- **[Deployment Guide](docs/deployment.md)** - Production deployment options
+- **[API Reference](docs/api.md)** - HTTP endpoints and client integration
+- **[Architecture Overview](docs/architecture.md)** - Technical architecture
+  details
+- **[Troubleshooting Guide](docs/troubleshooting.md)** - Common issues and
+  solutions
+
+## Contributing
+
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md)
+for details on:
+
+- Development setup
+- Code style and standards
+- Testing requirements
+- Pull request process
+
+### Development Setup
+
+```bash
+# Clone repository
+git clone https://github.com/billyjbryant/mcp-foxxy-bridge
+cd mcp-foxxy-bridge
+
+# Install dependencies
+uv sync
+
+# Run tests
+pytest
+
+# Code formatting and linting
+ruff format
+ruff check
+
+# Type checking
+mypy src/
+```
+
+## License
+
+MCP Foxxy Bridge is licensed under the **GNU Affero General Public License
+v3.0 or later (AGPL-3.0-or-later)** for open source use.
+
+This means you can use, modify, and distribute the software freely, but any
+modifications must be shared under the same license terms.
+
+### Attribution
+
+Portions of this software were originally licensed under the MIT License by
+Sergey Parfenyuk (2024) through [MCP Proxy](https://github.com/sparfenyuk/mcp-proxy).
+The original MIT license text is included in the LICENSE file for attribution
+purposes.
+
+---
+
+**Need help?** Check the [Troubleshooting Guide](docs/troubleshooting.md) or
+[open an issue](https://github.com/billyjbryant/mcp-foxxy-bridge/issues) on
+GitHub.

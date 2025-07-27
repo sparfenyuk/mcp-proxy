@@ -1,0 +1,33 @@
+# Global ownership - all files require review from maintainer
+* @billyjbryant
+
+# GitHub configuration and workflows
+/.github/ @billyjbryant
+
+# Build and packaging configuration
+/pyproject.toml @billyjbryant
+/Dockerfile @billyjbryant
+/docker-compose.yml @billyjbryant
+/.releaserc.json @billyjbryant
+/codecov.yml @billyjbryant
+/VERSION @billyjbryant
+
+# Core source code
+/src/ @billyjbryant
+
+# Tests
+/tests/ @billyjbryant
+
+# Documentation (can be more open for contributions)
+/docs/ @billyjbryant
+/README.md @billyjbryant
+/CONTRIBUTING.md @billyjbryant
+/CHANGELOG.md @billyjbryant
+
+# Configuration files
+/config.json @billyjbryant
+/docs/examples/ @billyjbryant
+
+# Security and licensing
+/LICENSE @billyjbryant
+/.gitignore @billyjbryant

@@ -1,0 +1,191 @@
+# Semantic Release Labels
+- name: "release: major"
+  color: "d73a4a"
+  description: "Creates a major version release (breaking changes)"
+
+- name: "release: minor"  
+  color: "0075ca"
+  description: "Creates a minor version release (new features)"
+
+- name: "release: patch"
+  color: "cfd3d7"
+  description: "Creates a patch version release (bug fixes)"
+
+- name: "release: skip"
+  color: "ffffff"
+  description: "Skip automatic release for this PR/commit"
+
+- name: "release: prerelease"
+  color: "fbca04"
+  description: "Creates a pre-release version"
+
+# Commit Type Labels
+- name: "type: feature"
+  color: "0e8a16"
+  description: "New feature or enhancement"
+
+- name: "type: bug"
+  color: "d73a4a"
+  description: "Bug fix"
+
+- name: "type: documentation"
+  color: "0075ca"
+  description: "Documentation changes"
+
+- name: "type: refactor"
+  color: "5319e7"
+  description: "Code refactoring without behavior changes"
+
+- name: "type: performance"
+  color: "ff6347"
+  description: "Performance improvements"
+
+- name: "type: test"
+  color: "1d76db"
+  description: "Adding or updating tests"
+
+- name: "type: chore"
+  color: "fef2c0"
+  description: "Maintenance tasks, dependencies, tooling"
+
+- name: "type: ci"
+  color: "28a745"
+  description: "CI/CD pipeline changes"
+
+- name: "type: build"
+  color: "f9d0c4"
+  description: "Build system or external dependencies"
+
+# Priority Labels
+- name: "priority: critical"
+  color: "b60205"
+  description: "Critical priority - needs immediate attention"
+
+- name: "priority: high"
+  color: "d93f0b"
+  description: "High priority"
+
+- name: "priority: medium"
+  color: "fbca04"
+  description: "Medium priority"
+
+- name: "priority: low"
+  color: "0e8a16"
+  description: "Low priority"
+
+# Status Labels
+- name: "status: blocked"
+  color: "d73a4a"
+  description: "Blocked by external dependency or issue"
+
+- name: "status: in progress"
+  color: "0075ca"
+  description: "Currently being worked on"
+
+- name: "status: needs review"
+  color: "fbca04"
+  description: "Ready for code review"
+
+- name: "status: needs testing"
+  color: "ff9500"
+  description: "Needs testing before merge"
+
+- name: "status: ready to merge"
+  color: "0e8a16"
+  description: "Approved and ready to merge"
+
+- name: "status: on hold"
+  color: "fef2c0"
+  description: "On hold pending decision or external factor"
+
+# Area Labels
+- name: "area: bridge"
+  color: "c2e0c6"
+  description: "Bridge core functionality"
+
+- name: "area: server"
+  color: "c2e0c6"
+  description: "Server-related changes"
+
+- name: "area: client"
+  color: "c2e0c6"
+  description: "Client-related changes"
+
+- name: "area: config"
+  color: "c2e0c6"
+  description: "Configuration system"
+
+- name: "area: docker"
+  color: "c2e0c6"
+  description: "Docker and containerization"
+
+- name: "area: docs"
+  color: "c2e0c6"
+  description: "Documentation"
+
+- name: "area: tests"
+  color: "c2e0c6"
+  description: "Test suite and testing infrastructure"
+
+- name: "area: ci/cd"
+  color: "c2e0c6"
+  description: "Continuous integration and deployment"
+
+# Size Labels (for PRs)
+- name: "size: XS"
+  color: "3cbf00"
+  description: "Extra small change (1-10 lines)"
+
+- name: "size: S"
+  color: "5d9801"
+  description: "Small change (11-50 lines)"
+
+- name: "size: M"
+  color: "7f7203"
+  description: "Medium change (51-200 lines)"
+
+- name: "size: L"
+  color: "a14c00"
+  description: "Large change (201-500 lines)"
+
+- name: "size: XL"
+  color: "c32500"
+  description: "Extra large change (501+ lines)"
+
+# Special Labels
+- name: "breaking change"
+  color: "d73a4a"
+  description: "Contains breaking changes (triggers major release)"
+
+- name: "good first issue"
+  color: "7057ff"
+  description: "Good for newcomers"
+
+- name: "help wanted"
+  color: "008672"
+  description: "Extra attention is needed"
+
+- name: "question"
+  color: "cc317c"
+  description: "Further information is requested"
+
+- name: "wontfix"
+  color: "ffffff"
+  description: "This will not be worked on"
+
+- name: "duplicate"
+  color: "cfd3d7"
+  description: "This issue or pull request already exists"
+
+- name: "invalid"
+  color: "e6e6e6"
+  description: "This doesn't seem right"
+
+# Dependencies
+- name: "dependencies"
+  color: "0366d6"
+  description: "Pull requests that update a dependency file"
+
+- name: "security"
+  color: "d73a4a"
+  description: "Security-related changes"

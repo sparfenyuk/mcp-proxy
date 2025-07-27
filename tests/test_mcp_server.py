@@ -18,7 +18,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 
-from mcp_proxy.mcp_server import MCPServerSettings, create_single_instance_routes, run_mcp_server
+from mcp_foxxy_bridge.mcp_server import MCPServerSettings, create_single_instance_routes, run_mcp_server
 
 
 def create_starlette_app(
@@ -235,7 +235,7 @@ def setup_async_context_mocks() -> tuple[
 
 async def test_run_mcp_server_no_servers_configured(mock_settings: MCPServerSettings) -> None:
     """Test run_mcp_server when no servers are configured."""
-    with patch("mcp_proxy.mcp_server.logger") as mock_logger:
+    with patch("mcp_foxxy_bridge.mcp_server.logger") as mock_logger:
         await run_mcp_server(mock_settings, None, {})
         mock_logger.error.assert_called_once_with("No servers configured to run.")
 
@@ -246,12 +246,12 @@ async def test_run_mcp_server_with_default_server(
 ) -> None:
     """Test run_mcp_server with a default server configuration."""
     with (
-        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
-        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
-        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
-        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_foxxy_bridge.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_foxxy_bridge.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_foxxy_bridge.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_foxxy_bridge.mcp_server.create_single_instance_routes") as mock_create_routes,
         patch("uvicorn.Server") as mock_uvicorn_server,
-        patch("mcp_proxy.mcp_server.logger") as mock_logger,
+        patch("mcp_foxxy_bridge.mcp_server.logger") as mock_logger,
     ):
         # Setup mocks
         mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
@@ -301,12 +301,12 @@ async def test_run_mcp_server_with_named_servers(
     }
 
     with (
-        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
-        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
-        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
-        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_foxxy_bridge.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_foxxy_bridge.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_foxxy_bridge.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_foxxy_bridge.mcp_server.create_single_instance_routes") as mock_create_routes,
         patch("uvicorn.Server") as mock_uvicorn_server,
-        patch("mcp_proxy.mcp_server.logger") as mock_logger,
+        patch("mcp_foxxy_bridge.mcp_server.logger") as mock_logger,
     ):
         # Setup mocks
         mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
@@ -358,11 +358,11 @@ async def test_run_mcp_server_with_cors_middleware(
     )
 
     with (
-        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
-        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
-        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
-        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
-        patch("mcp_proxy.mcp_server.Starlette") as mock_starlette,
+        patch("mcp_foxxy_bridge.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_foxxy_bridge.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_foxxy_bridge.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_foxxy_bridge.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_foxxy_bridge.mcp_server.Starlette") as mock_starlette,
         patch("uvicorn.Server") as mock_uvicorn_server,
     ):
         # Setup mocks
@@ -402,11 +402,11 @@ async def test_run_mcp_server_debug_mode(
     )
 
     with (
-        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
-        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
-        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
-        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
-        patch("mcp_proxy.mcp_server.Starlette") as mock_starlette,
+        patch("mcp_foxxy_bridge.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_foxxy_bridge.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_foxxy_bridge.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_foxxy_bridge.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_foxxy_bridge.mcp_server.Starlette") as mock_starlette,
         patch("uvicorn.Server") as mock_uvicorn_server,
     ):
         # Setup mocks
@@ -443,10 +443,10 @@ async def test_run_mcp_server_stateless_mode(
     )
 
     with (
-        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
-        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
-        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
-        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_foxxy_bridge.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_foxxy_bridge.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_foxxy_bridge.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_foxxy_bridge.mcp_server.create_single_instance_routes") as mock_create_routes,
         patch("uvicorn.Server") as mock_uvicorn_server,
     ):
         # Setup mocks
@@ -479,10 +479,10 @@ async def test_run_mcp_server_uvicorn_config(
 ) -> None:
     """Test run_mcp_server creates correct uvicorn configuration."""
     with (
-        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
-        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
-        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
-        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_foxxy_bridge.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_foxxy_bridge.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_foxxy_bridge.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_foxxy_bridge.mcp_server.create_single_instance_routes") as mock_create_routes,
         patch("uvicorn.Config") as mock_uvicorn_config,
         patch("uvicorn.Server") as mock_uvicorn_server,
     ):
@@ -520,7 +520,7 @@ async def test_run_mcp_server_global_status_updates(
     mock_stdio_params: StdioServerParameters,
 ) -> None:
     """Test run_mcp_server updates global status correctly."""
-    from mcp_proxy.mcp_server import _global_status
+    from mcp_foxxy_bridge.mcp_server import _global_status
 
     # Clear global status before test
     _global_status["server_instances"].clear()
@@ -528,10 +528,10 @@ async def test_run_mcp_server_global_status_updates(
     named_servers = {"test_server": mock_stdio_params}
 
     with (
-        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
-        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
-        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
-        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_foxxy_bridge.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_foxxy_bridge.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_foxxy_bridge.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_foxxy_bridge.mcp_server.create_single_instance_routes") as mock_create_routes,
         patch("uvicorn.Server") as mock_uvicorn_server,
     ):
         # Setup mocks
@@ -566,12 +566,12 @@ async def test_run_mcp_server_sse_url_logging(
     named_servers = {"test_server": mock_stdio_params}
 
     with (
-        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
-        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
-        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
-        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_foxxy_bridge.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_foxxy_bridge.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_foxxy_bridge.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_foxxy_bridge.mcp_server.create_single_instance_routes") as mock_create_routes,
         patch("uvicorn.Server") as mock_uvicorn_server,
-        patch("mcp_proxy.mcp_server.logger") as mock_logger,
+        patch("mcp_foxxy_bridge.mcp_server.logger") as mock_logger,
     ):
         # Setup mocks
         mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
@@ -607,8 +607,8 @@ async def test_run_mcp_server_exception_handling(
 ) -> None:
     """Test run_mcp_server handles exceptions properly."""
     with (
-        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
-        patch("mcp_proxy.mcp_server.ClientSession"),
+        patch("mcp_foxxy_bridge.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_foxxy_bridge.mcp_server.ClientSession"),
     ):
         # Setup mocks to raise an exception
         mock_stdio_client.side_effect = Exception("Connection failed")
@@ -629,12 +629,12 @@ async def test_run_mcp_server_both_default_and_named_servers(
     named_servers = {"named_server": mock_stdio_params}
 
     with (
-        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
-        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
-        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
-        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_foxxy_bridge.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_foxxy_bridge.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_foxxy_bridge.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_foxxy_bridge.mcp_server.create_single_instance_routes") as mock_create_routes,
         patch("uvicorn.Server") as mock_uvicorn_server,
-        patch("mcp_proxy.mcp_server.logger") as mock_logger,
+        patch("mcp_foxxy_bridge.mcp_server.logger") as mock_logger,
     ):
         # Setup mocks
         mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (

@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  mcp-foxxy-bridge:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      # Mount your bridge configuration
+      - ./bridge_config_example.json:/app/config/bridge_config.json:ro
+      # Optional: Mount additional directories for filesystem server
+      - ./data:/app/data:ro
+    environment:
+      # Add environment variables for MCP servers
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - BRAVE_API_KEY=${BRAVE_API_KEY}
+    command: ["--bridge-config", "/app/config/bridge_config.json", "--port", "8080", "--host", "0.0.0.0"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Optional: Add a simple web UI or monitoring
+  # watchtower:
+  #   image: containrrr/watchtower
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   command: --interval 30 --cleanup
+  #   restart: unless-stopped
