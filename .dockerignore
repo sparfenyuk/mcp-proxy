@@ -1,0 +1,8 @@
+# Exclude everything
+*
+
+# Include required files only
+!/src/
+!pyproject.toml
+!uv.lock
+!LICENSE

@@ -254,7 +254,7 @@ uv tool install git+https://github.com/sparfenyuk/mcp-proxy
 Starting from version 0.3.2, it's possible to pull and run the corresponding container image:
 
 ```bash
-docker run -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
+docker run --rm -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
 ```
 
 ### Troubleshooting
@@ -288,7 +288,7 @@ RUN python3 -m ensurepip && pip install --no-cache-dir uv
 ENV PATH="/usr/local/bin:$PATH" \
     UV_PYTHON_PREFERENCE=only-system
 
-ENTRYPOINT [ "mcp-proxy" ]
+ENTRYPOINT ["catatonit", "--", "mcp-proxy"]
 ```
 
 ## Docker Compose Setup
