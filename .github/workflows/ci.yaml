@@ -11,6 +11,7 @@ on:
 env:
   CI: true
   COLUMNS: 120
+  PYTHON_VERSION: "3.13"
 
 permissions:
   contents: read
@@ -23,7 +24,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: uv sync --frozen --all-extras --all-packages
@@ -44,7 +45,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: uv sync --frozen --all-extras --all-packages
@@ -94,7 +95,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - run: uv sync --frozen
       - run: uv run --frozen coverage combine coverage
@@ -134,7 +135,7 @@ jobs:
 
       - uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
         with:
-          python-version: "3.12"
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: check GITHUB_REF matches package version
         uses: samuelcolvin/check-python-version@758a13b52c26833cffda0f2ed4f3c9e54d9186d9 # v4.1
