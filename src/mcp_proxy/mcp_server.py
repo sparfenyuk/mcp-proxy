@@ -90,11 +90,26 @@ def create_single_instance_routes(
         _update_global_activity()
         await http_session_manager.handle_request(scope, receive, send)
 
+    async def handle_mcp_exact_endpoint(request: Request) -> Response:
+        """Handle StreamableHTTP requests to exact /mcp endpoint."""
+        from starlette.responses import RedirectResponse
+
+        # Redirect to /mcp/ to be handled by the Mount
+        return RedirectResponse(
+            url="/mcp/", status_code=307
+        )  # Temporary redirect preserves POST method
+
     routes = [
+        Route(
+            "/mcp",
+            endpoint=handle_mcp_exact_endpoint,
+            methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+        ),
         Mount("/mcp", app=handle_streamable_http_instance),
         Route("/sse", endpoint=handle_sse_instance),
         Mount("/messages/", app=sse_transport.handle_post_message),
     ]
+
     return routes, http_session_manager
 
 
@@ -196,23 +211,26 @@ async def run_mcp_server(
         )
         http_server = uvicorn.Server(config)
 
-        # Print out the SSE URLs for all configured servers
+        # Print out the endpoints for all configured servers
         base_url = f"http://{mcp_settings.bind_host}:{mcp_settings.port}"
-        sse_urls = []
 
-        # Add default server if configured
-        if default_server_params:
-            sse_urls.append(f"{base_url}/sse")
+        # Display endpoints prominently
+        if default_server_params or named_server_params:
+            logger.info("Serving MCP Servers:")
 
-        # Add named servers
-        sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
+            # Add default server if configured
+            if default_server_params:
+                logger.info("  Default server:")
+                logger.info("    - SSE: %s/sse", base_url)
+                logger.info("    - StreamableHTTP: %s/mcp", base_url)
 
-        # Display the SSE URLs prominently
-        if sse_urls:
-            # Using print directly for user visibility, with noqa to ignore linter warnings
-            logger.info("Serving MCP Servers via SSE:")
-            for url in sse_urls:
-                logger.info("  - %s", url)
+            # Add named servers
+            for name in named_server_params:
+                logger.info("  Named server '%s':", name)
+                logger.info("    - SSE: %s/servers/%s/sse", base_url, name)
+                logger.info("    - StreamableHTTP: %s/servers/%s/mcp", base_url, name)
+
+            logger.info("  Status: %s/status", base_url)
 
         logger.debug(
             "Serving incoming MCP requests on %s:%s",

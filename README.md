@@ -11,7 +11,7 @@
   - [1. stdio to SSE/StreamableHTTP](#1-stdio-to-ssestreamablehttp)
     - [1.1 Configuration](#11-configuration)
     - [1.2 Example usage](#12-example-usage)
-  - [2. SSE to stdio](#2-sse-to-stdio)
+  - [2. SSE/StreamableHTTP to stdio](#2-sse-to-stdio)
     - [2.1 Configuration](#21-configuration)
     - [2.2 Example usage](#22-example-usage)
   - [Named Servers](#named-servers)
@@ -29,10 +29,11 @@
 
 ## About
 
-The `mcp-proxy` is a tool that lets you switch between server transports. There are two supported modes:
+The `mcp-proxy` is a tool that lets you switch between server transports. There are three supported modes:
 
 1. stdio to SSE/StreamableHTTP
-2. SSE to stdio
+2. SSE/StreamableHTTP to stdio  
+3. stdio to SSE and StreamableHTTP server
 
 ## 1. stdio to SSE/StreamableHTTP
 
@@ -91,22 +92,27 @@ For Claude Desktop, the configuration entry can look like this:
 }
 ```
 
-## 2. SSE to stdio
+## 2. SSE/StreamableHTTP to stdio
 
-Run a proxy server exposing a SSE server that connects to a local stdio server.
+Run a proxy server exposing both SSE and StreamableHTTP endpoints that connect to a local stdio server.
 
-This allows remote connections to the local stdio server. The `mcp-proxy` opens a port to listen for SSE requests,
+This allows remote connections to the local stdio server. The `mcp-proxy` opens a port to listen for both SSE and StreamableHTTP requests,
 spawns a local stdio server that handles MCP requests.
 
 ```mermaid
 graph LR
-    A["LLM Client"] <-->|SSE| B["mcp-proxy"]
+    A["LLM Client"] <-->|SSE/StreamableHTTP| B["mcp-proxy"]
     B <-->|stdio| C["Local MCP Server"]
 
     style A fill:#ffe6f9,stroke:#333,color:black,stroke-width:2px
     style B fill:#e6e6ff,stroke:#333,color:black,stroke-width:2px
     style C fill:#e6ffe6,stroke:#333,color:black,stroke-width:2px
 ```
+
+**Important**: When running in this mode, the proxy exposes **both** SSE and StreamableHTTP transports simultaneously:
+- SSE endpoint: `http://localhost:8080/sse` 
+- StreamableHTTP endpoint: `http://localhost:8080/mcp`
+- Status endpoint: `http://localhost:8080/status`
 
 ### 2.1 Configuration
 
@@ -158,6 +164,11 @@ mcp-proxy --port=8080 --named-server fetch 'uvx mcp-server-fetch' --named-server
 
 # Start multiple named MCP servers using a configuration file
 mcp-proxy --port=8080 --named-server-config ./servers.json
+
+# Test the endpoints once server is running:
+# SSE endpoint:        curl http://localhost:8080/sse 
+# StreamableHTTP endpoint: curl http://localhost:8080/mcp
+# Status endpoint:     curl http://localhost:8080/status
 ```
 
 ## Named Servers
@@ -168,9 +179,14 @@ mcp-proxy --port=8080 --named-server-config ./servers.json
   - This argument is ignored if `--named-server-config` is used.
 - `FILE_PATH` - If provided, this is the exclusive source for named servers, and `--named-server` CLI arguments are ignored.
 
-If a default server is specified (the `command_or_url` argument without `--named-server` or `--named-server-config`), it will be accessible at the root paths (e.g., `http://127.0.0.1:8080/sse`).
+If a default server is specified (the `command_or_url` argument without `--named-server` or `--named-server-config`), it will be accessible at the root paths:
+- SSE: `http://127.0.0.1:8080/sse`
+- StreamableHTTP: `http://127.0.0.1:8080/mcp`
 
-Named servers (whether defined by `--named-server` or `--named-server-config`) will be accessible under `/servers/<server-name>/` (e.g., `http://127.0.0.1:8080/servers/fetch1/sse`).
+Named servers (whether defined by `--named-server` or `--named-server-config`) will be accessible under `/servers/<server-name>/`:
+- SSE: `http://127.0.0.1:8080/servers/fetch1/sse`
+- StreamableHTTP: `http://127.0.0.1:8080/servers/fetch1/mcp`
+
 The `/status` endpoint provides global status.
 
 **JSON Configuration File Format for `--named-server-config`:**

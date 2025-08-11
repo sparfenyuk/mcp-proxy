@@ -596,9 +596,11 @@ async def test_run_mcp_server_sse_url_logging(
             f"http://{mock_settings.bind_host}:{mock_settings.port}/servers/test_server/sse"
         )
 
-        mock_logger.info.assert_any_call("Serving MCP Servers via SSE:")
-        mock_logger.info.assert_any_call("  - %s", expected_default_url)
-        mock_logger.info.assert_any_call("  - %s", expected_named_url)
+        mock_logger.info.assert_any_call("Serving MCP Servers:")
+        mock_logger.info.assert_any_call("    - SSE: %s/sse", f"http://{mock_settings.bind_host}:{mock_settings.port}")
+        mock_logger.info.assert_any_call("    - StreamableHTTP: %s/mcp", f"http://{mock_settings.bind_host}:{mock_settings.port}")
+        mock_logger.info.assert_any_call("    - SSE: %s/servers/%s/sse", f"http://{mock_settings.bind_host}:{mock_settings.port}", "test_server")
+        mock_logger.info.assert_any_call("    - StreamableHTTP: %s/servers/%s/mcp", f"http://{mock_settings.bind_host}:{mock_settings.port}", "test_server")
 
 
 async def test_run_mcp_server_exception_handling(
