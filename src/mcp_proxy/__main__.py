@@ -192,6 +192,7 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         default="127.0.0.1",
         help="(deprecated) Same as --host",
     )
+
     mcp_server_group.add_argument(
         "--allow-origin",
         nargs="+",
@@ -200,6 +201,13 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
             "Allowed origins for the SSE server. Can be used multiple times. "
             "Default is no CORS allowed."
         ),
+    )
+
+    mcp_server_group.add_argument(
+        "--auth-token",
+        type=str,
+        default=None,
+        help="Authentication token for SSE server. If provided, clients must include 'Authorization: Bearer <token>' header.",
     )
 
 
@@ -334,6 +342,7 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         port=args_parsed.port if args_parsed.port is not None else args_parsed.sse_port,
         stateless=args_parsed.stateless,
         allow_origins=args_parsed.allow_origin if len(args_parsed.allow_origin) > 0 else None,
+        auth_token=args_parsed.auth_token,
         log_level="DEBUG" if args_parsed.debug else "INFO",
     )
 

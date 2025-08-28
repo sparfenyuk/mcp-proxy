@@ -15,6 +15,7 @@ from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
+from starlette.middleware.authentication import AuthenticationMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -34,7 +35,34 @@ class MCPServerSettings:
     port: int
     stateless: bool = False
     allow_origins: list[str] | None = None
+    auth_token: str | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+
+class HeaderAuthBackend:
+    """Authentication backend that checks for a valid Authorization header token."""
+
+    def __init__(self, auth_token: str) -> None:
+        """Initialize the authentication backend with the required token."""
+        self.auth_token = auth_token
+
+    async def authenticate(self, request: Request) -> tuple[bool, None]:
+        """Authenticate the request by checking the Authorization header."""
+        auth_header = request.headers.get("Authorization")
+        if not auth_header:
+            logger.warning("No Authorization header provided")
+            return False, None
+
+        if not auth_header.startswith("Bearer "):
+            logger.warning("Invalid Authorization header format")
+            return False, None
+
+        token = auth_header[7:]  # Remove "Bearer " prefix
+        if token != self.auth_token:
+            logger.warning("Invalid authentication token")
+            return False, None
+
+        return True, None
 
 
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
@@ -177,6 +205,11 @@ async def run_mcp_server(
                     allow_methods=["*"],
                     allow_headers=["*"],
                 ),
+            )
+
+        if mcp_settings.auth_token is not None:
+            middleware.append(
+                Middleware(AuthenticationMiddleware, backend=HeaderAuthBackend(auth_token=mcp_settings.auth_token)),
             )
 
         starlette_app = Starlette(
