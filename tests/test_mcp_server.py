@@ -27,6 +27,7 @@ def create_starlette_app(
     *,
     debug: bool = False,
     stateless: bool = False,
+    transport: str = "sse",
 ) -> Starlette:
     """Create a Starlette application for the MCP server.
 
@@ -35,11 +36,16 @@ def create_starlette_app(
         allow_origins: List of allowed CORS origins
         debug: Enable debug mode
         stateless: Whether to use stateless HTTP sessions
+        transport: Transport type to use
 
     Returns:
         Starlette application instance
     """
-    routes, http_manager = create_single_instance_routes(mcp_server, stateless_instance=stateless)
+    routes, http_manager = create_single_instance_routes(
+        mcp_server,
+        stateless_instance=stateless,
+        transport=transport
+    )
 
     middleware: list[Middleware] = []
     if allow_origins:
@@ -171,6 +177,38 @@ async def test_stateless_http_transport() -> None:
 # Unit tests for run_mcp_server method
 
 
+async def test_pure_http_transport() -> None:
+    """Test pure HTTP transport functionality."""
+    server = make_background_server(debug=True, transport="http")
+    async with server.run_in_background():
+        http_url = f"{server.url}/"
+        async with (
+            streamablehttp_client(url=http_url) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            response = await session.list_prompts()
+            assert len(response.prompts) == 1
+            assert response.prompts[0].name == "prompt1"
+
+            tool_result = await session.call_tool("echo", {"message": "test_http"})
+            assert len(tool_result.content) == 1
+            assert isinstance(tool_result.content[0], TextContent)
+            assert tool_result.content[0].text == "Echo: test_http"
+
+
+async def test_mcp_server_settings_with_http() -> None:
+    """Test MCPServerSettings with HTTP transport."""
+    settings = MCPServerSettings(
+        bind_host="127.0.0.1",
+        port=8080,
+        transport="http",
+    )
+    assert settings.transport == "http"
+    assert settings.bind_host == "127.0.0.1"
+    assert settings.port == 8080
+
+
 @pytest.fixture
 def mock_settings() -> MCPServerSettings:
     """Create mock MCP server settings for testing."""
@@ -276,6 +314,7 @@ async def test_run_mcp_server_with_default_server(
         mock_create_routes.assert_called_once_with(
             mock_proxy,
             stateless_instance=mock_settings.stateless,
+            transport=mock_settings.transport,
         )
         mock_logger.info.assert_any_call(
             "Setting up default server: %s %s",
@@ -470,6 +509,7 @@ async def test_run_mcp_server_stateless_mode(
         mock_create_routes.assert_called_once_with(
             mock_proxy,
             stateless_instance=True,
+            transport="sse",
         )
 
 
@@ -596,7 +636,7 @@ async def test_run_mcp_server_sse_url_logging(
             f"http://{mock_settings.bind_host}:{mock_settings.port}/servers/test_server/sse"
         )
 
-        mock_logger.info.assert_any_call("Serving MCP Servers via SSE:")
+        mock_logger.info.assert_any_call("Serving MCP Servers via %s:", "SSE")
         mock_logger.info.assert_any_call("  - %s", expected_default_url)
         mock_logger.info.assert_any_call("  - %s", expected_named_url)
 

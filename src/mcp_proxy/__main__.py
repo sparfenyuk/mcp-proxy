@@ -19,6 +19,7 @@ from importlib.metadata import version
 from mcp.client.stdio import StdioServerParameters
 
 from .config_loader import load_named_server_configs_from_file
+from .http_client import run_http_client
 from .mcp_server import MCPServerSettings, run_mcp_server
 from .sse_client import run_sse_client
 from .streamablehttp_client import run_streamablehttp_client
@@ -38,9 +39,10 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  mcp-proxy http://localhost:8080/sse\n"
             "  mcp-proxy --transport streamablehttp http://localhost:8080/mcp\n"
+            "  mcp-proxy --transport http http://localhost:8080/\n"
             "  mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse\n"
             "  mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2\n"
-            "  mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080\n"
+            "  mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080 --server-transport http\n"
             "  mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE\n"
             "  mcp-proxy your-command --port 8080 --allow-origin='*'\n"
         ),
@@ -90,7 +92,7 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
     )
     client_group.add_argument(
         "--transport",
-        choices=["sse", "streamablehttp"],
+        choices=["sse", "streamablehttp", "http"],
         default="sse",  # For backwards compatibility
         help="The transport to use for the client. Default is SSE.",
     )
@@ -182,6 +184,12 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         default=False,
     )
     mcp_server_group.add_argument(
+        "--server-transport",
+        choices=["sse", "streamablehttp", "http"],
+        default="sse",
+        help="The transport to use for the server. Default is SSE.",
+    )
+    mcp_server_group.add_argument(
         "--sse-port",
         type=int,
         default=0,
@@ -230,6 +238,8 @@ def _handle_sse_client_mode(
 
     if args_parsed.transport == "streamablehttp":
         asyncio.run(run_streamablehttp_client(args_parsed.command_or_url, headers=headers))
+    elif args_parsed.transport == "http":
+        asyncio.run(run_http_client(args_parsed.command_or_url, headers=headers))
     else:
         asyncio.run(run_sse_client(args_parsed.command_or_url, headers=headers))
 
@@ -335,6 +345,7 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         stateless=args_parsed.stateless,
         allow_origins=args_parsed.allow_origin if len(args_parsed.allow_origin) > 0 else None,
         log_level="DEBUG" if args_parsed.debug else "INFO",
+        transport=args_parsed.server_transport,
     )
 
 

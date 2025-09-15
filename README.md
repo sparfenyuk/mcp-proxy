@@ -31,20 +31,19 @@
 
 The `mcp-proxy` is a tool that lets you switch between server transports. There are two supported modes:
 
-1. stdio to SSE/StreamableHTTP
-2. SSE to stdio
+1. stdio to SSE/StreamableHTTP/HTTP
+2. SSE/StreamableHTTP/HTTP to stdio
 
-## 1. stdio to SSE/StreamableHTTP
+## 1. stdio to SSE/StreamableHTTP/HTTP
 
-Run a proxy server from stdio that connects to a remote SSE server.
+Run a proxy server from stdio that connects to a remote HTTP-based server.
 
-This mode allows clients like Claude Desktop to communicate to a remote server over SSE even though it is not supported
-natively.
+This mode allows clients like Claude Desktop to communicate to a remote server over SSE, StreamableHTTP, or pure HTTP even though it is not supported natively.
 
 ```mermaid
 graph LR
     A["Claude Desktop"] <--> |stdio| B["mcp-proxy"]
-    B <--> |SSE| C["External MCP Server"]
+    B <--> |SSE/StreamableHTTP/HTTP| C["External MCP Server"]
 
     style A fill:#ffe6f9,stroke:#333,color:black,stroke-width:2px
     style B fill:#e6e6ff,stroke:#333,color:black,stroke-width:2px
@@ -53,7 +52,10 @@ graph LR
 
 ### 1.1 Configuration
 
-This mode requires providing the URL of the MCP Server's SSE endpoint as the program’s first argument. If the server uses Streamable HTTP transport, make sure to enforce it on the `mcp-proxy` side by passing `--transport=streamablehttp`.
+This mode requires providing the URL of the MCP Server's HTTP endpoint as the program's first argument. You can specify the transport type:
+- For SSE servers: `--transport=sse` (default)
+- For StreamableHTTP servers: `--transport=streamablehttp`
+- For pure HTTP servers: `--transport=http`
 
 Arguments
 
@@ -61,7 +63,7 @@ Arguments
 | ---------------- | -------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
 | `command_or_url` | Yes      | The MCP server SSE endpoint to connect to                                                                         | http://example.io/sse                         |
 | `--headers`      | No       | Headers to use for the MCP server SSE connection                                                                  | Authorization 'Bearer my-secret-access-token' |
-| `--transport`    | No       | Decides which transport protocol to use when connecting to an MCP server. Can be either 'sse' or 'streamablehttp' | streamablehttp                                |
+| `--transport`    | No       | Decides which transport protocol to use when connecting to an MCP server. Can be 'sse', 'streamablehttp', or 'http' | streamablehttp                                |
 
 Environment Variables
 
@@ -75,10 +77,11 @@ Environment Variables
 
 For Claude Desktop, the configuration entry can look like this:
 
+**SSE Transport (default):**
 ```json
 {
   "mcpServers": {
-    "mcp-proxy": {
+    "mcp-proxy-sse": {
       "command": "mcp-proxy",
       "args": [
         "http://example.io/sse"
@@ -91,16 +94,51 @@ For Claude Desktop, the configuration entry can look like this:
 }
 ```
 
-## 2. SSE to stdio
+**StreamableHTTP Transport:**
+```json
+{
+  "mcpServers": {
+    "mcp-proxy-streamablehttp": {
+      "command": "mcp-proxy",
+      "args": [
+        "--transport", "streamablehttp",
+        "http://example.io/mcp"
+      ],
+      "env": {
+        "API_ACCESS_TOKEN": "access-token"
+      }
+    }
+  }
+}
+```
 
-Run a proxy server exposing a SSE server that connects to a local stdio server.
+**Pure HTTP Transport:**
+```json
+{
+  "mcpServers": {
+    "mcp-proxy-http": {
+      "command": "mcp-proxy",
+      "args": [
+        "--transport", "http",
+        "http://example.io/"
+      ],
+      "env": {
+        "API_ACCESS_TOKEN": "access-token"
+      }
+    }
+  }
+}
+```
 
-This allows remote connections to the local stdio server. The `mcp-proxy` opens a port to listen for SSE requests,
-spawns a local stdio server that handles MCP requests.
+## 2. HTTP to stdio
+
+Run a proxy server exposing an HTTP server that connects to a local stdio server.
+
+This allows remote connections to the local stdio server. The `mcp-proxy` opens a port to listen for HTTP requests (SSE, StreamableHTTP, or pure HTTP), spawns a local stdio server that handles MCP requests.
 
 ```mermaid
 graph LR
-    A["LLM Client"] <-->|SSE| B["mcp-proxy"]
+    A["LLM Client"] <-->|HTTP| B["mcp-proxy"]
     B <-->|stdio| C["Local MCP Server"]
 
     style A fill:#ffe6f9,stroke:#333,color:black,stroke-width:2px
@@ -127,6 +165,7 @@ Arguments
 | `--pass-environment`                 | No                         | Pass through all environment variables when spawning the server                             | --no-pass-environment                       |
 | `--allow-origin`                     | No                         | Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed. | --allow-origin "\*"                           |
 | `--stateless`                        | No                         | Enable stateless mode for streamable http transports. Default is False                      | --no-stateless                              |
+| `--server-transport`                 | No                         | Transport protocol for the server. Can be 'sse', 'streamablehttp', or 'http'. Default is 'sse'. | --server-transport http                     |
 | `--named-server NAME COMMAND_STRING` | No                         | Defines a named stdio server.                                                               | --named-server fetch 'uvx mcp-server-fetch' |
 | `--named-server-config FILE_PATH`    | No                         | Path to a JSON file defining named stdio servers.                                           | --named-server-config /path/to/servers.json |
 | `--sse-port` (deprecated)            | No, random available       | The SSE server port to listen on                                                            | 8080                                        |
@@ -158,6 +197,12 @@ mcp-proxy --port=8080 --named-server fetch 'uvx mcp-server-fetch' --named-server
 
 # Start multiple named MCP servers using a configuration file
 mcp-proxy --port=8080 --named-server-config ./servers.json
+
+# Start the MCP server with HTTP transport
+mcp-proxy --port=8080 --server-transport=http uvx mcp-server-fetch
+
+# Start the MCP server with StreamableHTTP transport
+mcp-proxy --port=8080 --server-transport=streamablehttp uvx mcp-server-fetch
 ```
 
 ## Named Servers

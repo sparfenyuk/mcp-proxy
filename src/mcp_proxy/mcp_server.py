@@ -35,6 +35,7 @@ class MCPServerSettings:
     stateless: bool = False
     allow_origins: list[str] | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    transport: Literal["sse", "streamablehttp", "http"] = "sse"
 
 
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
@@ -57,44 +58,68 @@ def create_single_instance_routes(
     mcp_server_instance: MCPServerSDK[object],
     *,
     stateless_instance: bool,
+    transport: Literal["sse", "streamablehttp", "http"] = "sse",
 ) -> tuple[list[BaseRoute], StreamableHTTPSessionManager]:  # Return the manager itself
     """Create Starlette routes and the HTTP session manager for a single MCP server instance."""
     logger.debug(
-        "Creating routes for a single MCP server instance (stateless: %s)",
+        "Creating routes for a single MCP server instance (stateless: %s, transport: %s)",
         stateless_instance,
+        transport,
     )
 
-    sse_transport = SseServerTransport("/messages/")
-    http_session_manager = StreamableHTTPSessionManager(
-        app=mcp_server_instance,
-        event_store=None,
-        json_response=True,
-        stateless=stateless_instance,
-    )
+    routes: list[BaseRoute] = []
 
-    async def handle_sse_instance(request: Request) -> Response:
-        async with sse_transport.connect_sse(
-            request.scope,
-            request.receive,
-            request._send,  # noqa: SLF001
-        ) as (read_stream, write_stream):
+    if transport in ("sse", "streamablehttp"):
+        sse_transport = SseServerTransport("/messages/")
+        http_session_manager = StreamableHTTPSessionManager(
+            app=mcp_server_instance,
+            event_store=None,
+            json_response=True,
+            stateless=stateless_instance,
+        )
+
+        async def handle_sse_instance(request: Request) -> Response:
+            async with sse_transport.connect_sse(
+                request.scope,
+                request.receive,
+                request._send,  # noqa: SLF001
+            ) as (read_stream, write_stream):
+                _update_global_activity()
+                await mcp_server_instance.run(
+                    read_stream,
+                    write_stream,
+                    mcp_server_instance.create_initialization_options(),
+                )
+            return Response()
+
+        async def handle_streamable_http_instance(scope: Scope, receive: Receive, send: Send) -> None:
             _update_global_activity()
-            await mcp_server_instance.run(
-                read_stream,
-                write_stream,
-                mcp_server_instance.create_initialization_options(),
-            )
-        return Response()
+            await http_session_manager.handle_request(scope, receive, send)
 
-    async def handle_streamable_http_instance(scope: Scope, receive: Receive, send: Send) -> None:
-        _update_global_activity()
-        await http_session_manager.handle_request(scope, receive, send)
+        routes.extend([
+            Mount("/mcp", app=handle_streamable_http_instance),
+            Route("/sse", endpoint=handle_sse_instance),
+            Mount("/messages/", app=sse_transport.handle_post_message),
+        ])
 
-    routes = [
-        Mount("/mcp", app=handle_streamable_http_instance),
-        Route("/sse", endpoint=handle_sse_instance),
-        Mount("/messages/", app=sse_transport.handle_post_message),
-    ]
+    elif transport == "http":
+        http_session_manager = StreamableHTTPSessionManager(
+            app=mcp_server_instance,
+            event_store=None,
+            json_response=True,
+            stateless=stateless_instance,
+        )
+
+        async def handle_http_instance(scope: Scope, receive: Receive, send: Send) -> None:
+            _update_global_activity()
+            await http_session_manager.handle_request(scope, receive, send)
+
+        routes.append(Mount("/", app=handle_http_instance))
+
+    else:
+        msg = f"Unsupported transport: {transport}"
+        raise ValueError(msg)
+
     return routes, http_session_manager
 
 
@@ -114,7 +139,7 @@ async def run_mcp_server(
     async with contextlib.AsyncExitStack() as stack:
         # Manage lifespans of all StreamableHTTPSessionManagers
         @contextlib.asynccontextmanager
-        async def combined_lifespan(_app: Starlette) -> AsyncIterator[None]:
+        async def combined_lifespan(_: Starlette) -> AsyncIterator[None]:
             logger.info("Main application lifespan starting...")
             # All http_session_managers' .run() are already entered into the stack
             yield
@@ -134,6 +159,7 @@ async def run_mcp_server(
             instance_routes, http_manager = create_single_instance_routes(
                 proxy,
                 stateless_instance=mcp_settings.stateless,
+                transport=mcp_settings.transport,
             )
             await stack.enter_async_context(http_manager.run())  # Manage lifespan by calling run()
             all_routes.extend(instance_routes)
@@ -154,6 +180,7 @@ async def run_mcp_server(
             instance_routes_named, http_manager_named = create_single_instance_routes(
                 proxy_named,
                 stateless_instance=mcp_settings.stateless,
+                transport=mcp_settings.transport,
             )
             await stack.enter_async_context(
                 http_manager_named.run(),
@@ -196,22 +223,33 @@ async def run_mcp_server(
         )
         http_server = uvicorn.Server(config)
 
-        # Print out the SSE URLs for all configured servers
+        # Print out the server URLs for all configured servers
         base_url = f"http://{mcp_settings.bind_host}:{mcp_settings.port}"
-        sse_urls = []
+        server_urls = []
 
         # Add default server if configured
         if default_server_params:
-            sse_urls.append(f"{base_url}/sse")
+            if mcp_settings.transport == "http":
+                server_urls.append(f"{base_url}/")
+            elif mcp_settings.transport == "streamablehttp":
+                server_urls.append(f"{base_url}/mcp")
+            else:  # sse
+                server_urls.append(f"{base_url}/sse")
 
         # Add named servers
-        sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
+        for name in named_server_params:
+            if mcp_settings.transport == "http":
+                server_urls.append(f"{base_url}/servers/{name}/")
+            elif mcp_settings.transport == "streamablehttp":
+                server_urls.append(f"{base_url}/servers/{name}/mcp")
+            else:  # sse
+                server_urls.append(f"{base_url}/servers/{name}/sse")
 
-        # Display the SSE URLs prominently
-        if sse_urls:
-            # Using print directly for user visibility, with noqa to ignore linter warnings
-            logger.info("Serving MCP Servers via SSE:")
-            for url in sse_urls:
+        # Display the server URLs prominently
+        if server_urls:
+            transport_name = mcp_settings.transport.upper()
+            logger.info("Serving MCP Servers via %s:", transport_name)
+            for url in server_urls:
                 logger.info("  - %s", url)
 
         logger.debug(
