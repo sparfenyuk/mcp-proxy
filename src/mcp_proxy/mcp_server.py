@@ -49,6 +49,7 @@ def _update_global_activity() -> None:
     _global_status["api_last_activity"] = datetime.now(timezone.utc).isoformat()
 
 
+
 async def _handle_status(_: Request) -> Response:
     """Global health check and service usage monitoring endpoint."""
     return JSONResponse(_global_status)
@@ -96,11 +97,16 @@ def create_single_instance_routes(
             _update_global_activity()
             await http_session_manager.handle_request(scope, receive, send)
 
-        routes.extend([
-            Mount("/mcp", app=handle_streamable_http_instance),
-            Route("/sse", endpoint=handle_sse_instance),
-            Mount("/messages/", app=sse_transport.handle_post_message),
-        ])
+        if transport == "sse":
+            routes.extend([
+                Route("/sse", endpoint=handle_sse_instance),
+                Mount("/messages/", app=sse_transport.handle_post_message),
+            ])
+        else:  # streamablehttp
+            routes.extend([
+                Mount("/mcp", app=handle_streamable_http_instance),
+                Mount("/messages/", app=sse_transport.handle_post_message),
+            ])
 
     elif transport == "http":
         http_session_manager = StreamableHTTPSessionManager(
@@ -114,7 +120,7 @@ def create_single_instance_routes(
             _update_global_activity()
             await http_session_manager.handle_request(scope, receive, send)
 
-        routes.append(Mount("/", app=handle_http_instance))
+        routes.append(Mount("/mcp", app=handle_http_instance))
 
     else:
         msg = f"Unsupported transport: {transport}"
@@ -230,7 +236,7 @@ async def run_mcp_server(
         # Add default server if configured
         if default_server_params:
             if mcp_settings.transport == "http":
-                server_urls.append(f"{base_url}/")
+                server_urls.append(f"{base_url}/mcp")
             elif mcp_settings.transport == "streamablehttp":
                 server_urls.append(f"{base_url}/mcp")
             else:  # sse
@@ -239,7 +245,7 @@ async def run_mcp_server(
         # Add named servers
         for name in named_server_params:
             if mcp_settings.transport == "http":
-                server_urls.append(f"{base_url}/servers/{name}/")
+                server_urls.append(f"{base_url}/servers/{name}/mcp")
             elif mcp_settings.transport == "streamablehttp":
                 server_urls.append(f"{base_url}/servers/{name}/mcp")
             else:  # sse

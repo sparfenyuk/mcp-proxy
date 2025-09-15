@@ -44,7 +44,7 @@ def create_starlette_app(
     routes, http_manager = create_single_instance_routes(
         mcp_server,
         stateless_instance=stateless,
-        transport=transport
+        transport=transport,
     )
 
     middleware: list[Middleware] = []
@@ -133,10 +133,10 @@ async def test_sse_transport() -> None:
 
 
 async def test_http_transport() -> None:
-    """Test HTTP transport layer functionality."""
-    server = make_background_server(debug=True)
+    """Test streamablehttp transport layer functionality."""
+    server = make_background_server(debug=True, transport="streamablehttp")
     async with server.run_in_background():
-        http_url = f"{server.url}/mcp/"
+        http_url = f"{server.url}/mcp"
         async with (
             streamablehttp_client(url=http_url) as (read, write, _),
             ClientSession(read, write) as session,
@@ -154,10 +154,10 @@ async def test_http_transport() -> None:
 
 
 async def test_stateless_http_transport() -> None:
-    """Test stateless HTTP transport functionality."""
-    server = make_background_server(debug=True, stateless=True)
+    """Test stateless streamablehttp transport functionality."""
+    server = make_background_server(debug=True, stateless=True, transport="streamablehttp")
     async with server.run_in_background():
-        http_url = f"{server.url}/mcp/"
+        http_url = f"{server.url}/mcp"
         async with (
             streamablehttp_client(url=http_url) as (read, write, _),
             ClientSession(read, write) as session,
@@ -181,7 +181,7 @@ async def test_pure_http_transport() -> None:
     """Test pure HTTP transport functionality."""
     server = make_background_server(debug=True, transport="http")
     async with server.run_in_background():
-        http_url = f"{server.url}/"
+        http_url = f"{server.url}/mcp"
         async with (
             streamablehttp_client(url=http_url) as (read, write, _),
             ClientSession(read, write) as session,
