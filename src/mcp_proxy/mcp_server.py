@@ -120,7 +120,31 @@ def create_single_instance_routes(
             _update_global_activity()
             await http_session_manager.handle_request(scope, receive, send)
 
-        routes.append(Mount("/mcp", app=handle_http_instance))
+        # For HTTP transport, handle paths that start with /mcp
+        async def handle_http_with_prefix(scope: Scope, receive: Receive, send: Send) -> None:
+            """Handle requests with /mcp prefix by stripping the prefix."""
+            path = scope["path"]
+
+            # Handle exact /mcp path as root (including when followed by query params or fragments)
+            if path == "/mcp":
+                modified_scope = dict(scope)
+                modified_scope["path"] = "/"
+                modified_scope["raw_path"] = b"/"
+            # Handle /mcp/ and sub-paths by stripping /mcp prefix
+            elif path.startswith("/mcp/"):
+                modified_scope = dict(scope)
+                new_path = path[4:]  # Remove "/mcp" prefix, keeping the "/"
+                modified_scope["path"] = new_path if new_path else "/"
+                modified_scope["raw_path"] = modified_scope["path"].encode()
+            else:
+                # This shouldn't happen with proper routing, but handle gracefully
+                modified_scope = dict(scope)
+
+            _update_global_activity()
+            await http_session_manager.handle_request(modified_scope, receive, send)
+
+        # Mount to handle /mcp and /mcp/* paths
+        routes.append(Mount("/mcp", app=handle_http_with_prefix))
 
     else:
         msg = f"Unsupported transport: {transport}"
