@@ -15,6 +15,7 @@
     - [2.1 Configuration](#21-configuration)
     - [2.2 Example usage](#22-example-usage)
   - [Named Servers](#named-servers)
+  - [Authentication](#authentication)
   - [Installation](#installation)
     - [Installing via Smithery](#installing-via-smithery)
     - [Installing via PyPI](#installing-via-pypi)
@@ -126,6 +127,7 @@ Arguments
 | `--cwd`                              | No                         | The working directory to pass to the MCP stdio server process.                              | /tmp                                        |
 | `--pass-environment`                 | No                         | Pass through all environment variables when spawning the server                             | --no-pass-environment                       |
 | `--allow-origin`                     | No                         | Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed. | --allow-origin "\*"                           |
+| `--api-key`                          | No                         | API key for authentication. Can also be set via MCP_PROXY_API_KEY env var.                 | --api-key YOUR_SECRET_KEY                  |
 | `--stateless`                        | No                         | Enable stateless mode for streamable http transports. Default is False                      | --no-stateless                              |
 | `--named-server NAME COMMAND_STRING` | No                         | Defines a named stdio server.                                                               | --named-server fetch 'uvx mcp-server-fetch' |
 | `--named-server-config FILE_PATH`    | No                         | Path to a JSON file defining named stdio servers.                                           | --named-server-config /path/to/servers.json |
@@ -210,6 +212,46 @@ The JSON file should follow this structure:
 - `args`: (Optional) A list of arguments for the command. Defaults to an empty list.
 - `enabled`: (Optional) If `false`, this server definition will be skipped. Defaults to `true`.
 - `timeout` and `transportType`: These fields are present in standard MCP client configurations but are currently **ignored** by `mcp-proxy` when loading named servers. The transport type is implicitly "stdio".
+
+## Authentication
+
+The MCP proxy supports optional API key authentication to protect your endpoints. When enabled, all requests to `/sse` and `/mcp` endpoints (including named server paths like `/servers/*/sse` and `/servers/*/mcp`) require a valid API key.
+
+### Configuration
+
+You can configure authentication in two ways:
+
+1. **Command-line argument**: `--api-key YOUR_SECRET_KEY`
+2. **Environment variable**: `MCP_PROXY_API_KEY=YOUR_SECRET_KEY`
+
+If no API key is configured, authentication is disabled by default (backward compatible).
+
+### Usage
+
+When authentication is enabled, clients must include the API key in their requests using the `X-API-Key` header (case-insensitive):
+
+```bash
+# Example: Connecting to a protected SSE endpoint
+curl -H "X-API-Key: YOUR_SECRET_KEY" http://localhost:8080/sse
+
+# Example: Starting a protected server
+mcp-proxy --port 8080 --api-key YOUR_SECRET_KEY uvx mcp-server-fetch
+
+# Example: Using environment variable
+export MCP_PROXY_API_KEY=YOUR_SECRET_KEY
+mcp-proxy --port 8080 uvx mcp-server-fetch
+```
+
+### Protected Endpoints
+
+- `/sse` and `/servers/*/sse` - SSE endpoints
+- `/mcp` and `/servers/*/mcp` - MCP endpoints
+- `/messages/*` - Message endpoints
+
+### Unprotected Endpoints
+
+- `/status` - Health check endpoint (always accessible)
+- OPTIONS requests - CORS preflight requests
 
 ## Installation
 
@@ -361,6 +403,7 @@ SSE server options:
   --sse-host SSE_HOST   (deprecated) Same as --host
   --allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]
                         Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.
+  --api-key API_KEY     API key for authentication. Can also be set via MCP_PROXY_API_KEY env var. If not provided, authentication is disabled.
 
 Examples:
   mcp-proxy http://localhost:8080/sse
@@ -372,6 +415,7 @@ Examples:
   mcp-proxy --port 8080 --named-server-config /path/to/servers.json -- my-default-command --arg1
   mcp-proxy --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE -- my-default-command
   mcp-proxy --port 8080 --allow-origin='*' -- my-default-command
+  mcp-proxy --port 8080 --api-key YOUR_SECRET_KEY -- my-default-command
 ```
 
 ### Example config file

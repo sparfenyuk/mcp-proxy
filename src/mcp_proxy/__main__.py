@@ -201,6 +201,14 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
             "Default is no CORS allowed."
         ),
     )
+    mcp_server_group.add_argument(
+        "--api-key",
+        default=os.getenv("MCP_PROXY_API_KEY"),
+        help=(
+            "API key for authentication. Can also be set via MCP_PROXY_API_KEY env var. "
+            "If not provided, authentication is disabled."
+        ),
+    )
 
 
 def _setup_logging(*, debug: bool) -> logging.Logger:
@@ -335,6 +343,7 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         stateless=args_parsed.stateless,
         allow_origins=args_parsed.allow_origin if len(args_parsed.allow_origin) > 0 else None,
         log_level="DEBUG" if args_parsed.debug else "INFO",
+        api_key=args_parsed.api_key,
     )
 
 

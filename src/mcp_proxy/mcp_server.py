@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.types import Receive, Scope, Send
 
+from .auth import AuthMiddleware
 from .proxy_server import create_proxy_server
 
 logger = logging.getLogger(__name__)
@@ -35,6 +36,7 @@ class MCPServerSettings:
     stateless: bool = False
     allow_origins: list[str] | None = None
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    api_key: str | None = None
 
 
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
@@ -169,6 +171,10 @@ async def run_mcp_server(
             return
 
         middleware: list[Middleware] = []
+        if mcp_settings.api_key:
+            middleware.append(
+                Middleware(AuthMiddleware, api_key=mcp_settings.api_key),
+            )
         if mcp_settings.allow_origins:
             middleware.append(
                 Middleware(

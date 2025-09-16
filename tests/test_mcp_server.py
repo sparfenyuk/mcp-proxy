@@ -621,6 +621,51 @@ async def test_run_mcp_server_exception_handling(
             assert "Connection failed" in str(e)  # noqa: PT017
 
 
+async def test_run_mcp_server_with_authentication(
+    mock_stdio_params: StdioServerParameters,
+) -> None:
+    """Test run_mcp_server with authentication enabled."""
+    auth_settings = MCPServerSettings(
+        bind_host="127.0.0.1",
+        port=8080,
+        api_key="test-secret-key",
+    )
+
+    with (
+        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_proxy.mcp_server.Starlette") as mock_starlette,
+        patch("uvicorn.Server") as mock_uvicorn_server,
+    ):
+        # Setup mocks
+        mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
+            setup_async_context_mocks()
+        )
+        mock_stdio_client.return_value = mock_stdio_context
+        mock_client_session.return_value = mock_session_context
+
+        mock_proxy = AsyncMock()
+        mock_create_proxy.return_value = mock_proxy
+        mock_create_routes.return_value = (mock_routes, mock_http_manager)
+
+        mock_server_instance = AsyncMock()
+        mock_uvicorn_server.return_value = mock_server_instance
+
+        # Run the function
+        await run_mcp_server(auth_settings, mock_stdio_params, {})
+
+        # Verify Starlette was called with AuthMiddleware
+        mock_starlette.assert_called_once()
+        call_args = mock_starlette.call_args
+        middleware = call_args.kwargs["middleware"]
+
+        assert len(middleware) == 1
+        assert middleware[0].cls.__name__ == "AuthMiddleware"
+        assert middleware[0].kwargs == {"api_key": "test-secret-key"}
+
+
 async def test_run_mcp_server_both_default_and_named_servers(
     mock_settings: MCPServerSettings,
     mock_stdio_params: StdioServerParameters,
@@ -672,3 +717,4 @@ async def test_run_mcp_server_both_default_and_named_servers(
         )
 
         mock_server_instance.serve.assert_called_once()
+
