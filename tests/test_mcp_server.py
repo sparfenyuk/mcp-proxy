@@ -717,4 +717,3 @@ async def test_run_mcp_server_both_default_and_named_servers(
         )
 
         mock_server_instance.serve.assert_called_once()
-

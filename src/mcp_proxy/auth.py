@@ -1,7 +1,9 @@
 """Simple authentication middleware for MCP proxy."""
 
 import logging
+from collections.abc import Awaitable, Callable
 
+from starlette.applications import Starlette
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -12,12 +14,16 @@ logger = logging.getLogger(__name__)
 class AuthMiddleware(BaseHTTPMiddleware):
     """Simple API key authentication middleware."""
 
-    def __init__(self, app, api_key: str | None = None) -> None:
+    def __init__(self, app: Starlette, api_key: str | None = None) -> None:
         """Initialize middleware with optional API key."""
         super().__init__(app)
         self.api_key = api_key
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def dispatch(
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         """Check API key for protected endpoints."""
         # Skip auth if no API key configured
         if not self.api_key:
@@ -30,11 +36,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Check if path needs protection (/sse, /mcp, /messages, /servers/*/sse, /servers/*/mcp)
         path = request.url.path
         needs_auth = (
-            path.startswith("/sse") or
-            path.startswith("/mcp") or
-            path.startswith("/messages") or
-            "/sse" in path or
-            "/mcp" in path
+            path.startswith(("/sse", "/mcp", "/messages")) or "/sse" in path or "/mcp" in path
         )
 
         if not needs_auth:
@@ -47,8 +49,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             logger.warning("Auth failed for %s %s", request.method, path)
             return JSONResponse(
                 {"error": "Unauthorized"},
-                status_code=401
+                status_code=401,
             )
 
         return await call_next(request)
-

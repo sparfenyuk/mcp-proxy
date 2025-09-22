@@ -100,6 +100,109 @@ def create_single_instance_routes(
     return routes, http_session_manager
 
 
+async def _setup_default_server(
+    stack: contextlib.AsyncExitStack,
+    default_server_params: StdioServerParameters,
+    mcp_settings: MCPServerSettings,
+) -> list[BaseRoute]:
+    """Setup default server and return its routes."""
+    logger.info(
+        "Setting up default server: %s %s",
+        default_server_params.command,
+        " ".join(default_server_params.args),
+    )
+    stdio_streams = await stack.enter_async_context(stdio_client(default_server_params))
+    session = await stack.enter_async_context(ClientSession(*stdio_streams))
+    proxy = await create_proxy_server(session)
+
+    instance_routes, http_manager = create_single_instance_routes(
+        proxy,
+        stateless_instance=mcp_settings.stateless,
+    )
+    await stack.enter_async_context(http_manager.run())
+    _global_status["server_instances"]["default"] = "configured"
+    return instance_routes
+
+
+async def _setup_named_servers(
+    stack: contextlib.AsyncExitStack,
+    named_server_params: dict[str, StdioServerParameters],
+    mcp_settings: MCPServerSettings,
+) -> list[BaseRoute]:
+    """Setup named servers and return their routes."""
+    routes: list[BaseRoute] = []
+    for name, params in named_server_params.items():
+        logger.info(
+            "Setting up named server '%s': %s %s",
+            name,
+            params.command,
+            " ".join(params.args),
+        )
+        stdio_streams_named = await stack.enter_async_context(stdio_client(params))
+        session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
+        proxy_named = await create_proxy_server(session_named)
+
+        instance_routes_named, http_manager_named = create_single_instance_routes(
+            proxy_named,
+            stateless_instance=mcp_settings.stateless,
+        )
+        await stack.enter_async_context(http_manager_named.run())
+
+        # Mount these routes under /servers/<name>/
+        server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)
+        routes.append(server_mount)
+        _global_status["server_instances"][name] = "configured"
+    return routes
+
+
+def _create_middleware(mcp_settings: MCPServerSettings) -> list[Middleware]:
+    """Create middleware list based on settings."""
+    middleware: list[Middleware] = []
+    if mcp_settings.api_key:
+        middleware.append(
+            Middleware(AuthMiddleware, api_key=mcp_settings.api_key),
+        )
+    if mcp_settings.allow_origins:
+        middleware.append(
+            Middleware(
+                CORSMiddleware,
+                allow_origins=mcp_settings.allow_origins,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            ),
+        )
+    return middleware
+
+
+def _log_server_urls(
+    mcp_settings: MCPServerSettings,
+    default_server_params: StdioServerParameters | None,
+    named_server_params: dict[str, StdioServerParameters],
+) -> None:
+    """Log the SSE URLs for all configured servers."""
+    base_url = f"http://{mcp_settings.bind_host}:{mcp_settings.port}"
+    sse_urls = []
+
+    # Add default server if configured
+    if default_server_params:
+        sse_urls.append(f"{base_url}/sse")
+
+    # Add named servers
+    sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
+
+    # Display the SSE URLs prominently
+    if sse_urls:
+        logger.info("Serving MCP Servers via SSE:")
+        for url in sse_urls:
+            logger.info("  - %s", url)
+
+    logger.debug(
+        "Serving incoming MCP requests on %s:%s",
+        mcp_settings.bind_host,
+        mcp_settings.port,
+    )
+
+
 async def run_mcp_server(
     mcp_settings: MCPServerSettings,
     default_server_params: StdioServerParameters | None = None,
@@ -109,9 +212,14 @@ async def run_mcp_server(
     if named_server_params is None:
         named_server_params = {}
 
+    if not default_server_params and not named_server_params:
+        logger.error("No servers configured to run.")
+        return
+
     all_routes: list[BaseRoute] = [
         Route("/status", endpoint=_handle_status),  # Global status endpoint
     ]
+
     # Use AsyncExitStack to manage lifecycles of multiple components
     async with contextlib.AsyncExitStack() as stack:
         # Manage lifespans of all StreamableHTTPSessionManagers
@@ -124,76 +232,32 @@ async def run_mcp_server(
 
         # Setup default server if configured
         if default_server_params:
-            logger.info(
-                "Setting up default server: %s %s",
-                default_server_params.command,
-                " ".join(default_server_params.args),
+            instance_routes = await _setup_default_server(
+                stack,
+                default_server_params,
+                mcp_settings,
             )
-            stdio_streams = await stack.enter_async_context(stdio_client(default_server_params))
-            session = await stack.enter_async_context(ClientSession(*stdio_streams))
-            proxy = await create_proxy_server(session)
-
-            instance_routes, http_manager = create_single_instance_routes(
-                proxy,
-                stateless_instance=mcp_settings.stateless,
-            )
-            await stack.enter_async_context(http_manager.run())  # Manage lifespan by calling run()
             all_routes.extend(instance_routes)
-            _global_status["server_instances"]["default"] = "configured"
 
         # Setup named servers
-        for name, params in named_server_params.items():
-            logger.info(
-                "Setting up named server '%s': %s %s",
-                name,
-                params.command,
-                " ".join(params.args),
-            )
-            stdio_streams_named = await stack.enter_async_context(stdio_client(params))
-            session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
-            proxy_named = await create_proxy_server(session_named)
+        if named_server_params:
+            named_routes = await _setup_named_servers(stack, named_server_params, mcp_settings)
+            all_routes.extend(named_routes)
 
-            instance_routes_named, http_manager_named = create_single_instance_routes(
-                proxy_named,
-                stateless_instance=mcp_settings.stateless,
-            )
-            await stack.enter_async_context(
-                http_manager_named.run(),
-            )  # Manage lifespan by calling run()
-
-            # Mount these routes under /servers/<name>/
-            server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)
-            all_routes.append(server_mount)
-            _global_status["server_instances"][name] = "configured"
-
-        if not default_server_params and not named_server_params:
-            logger.error("No servers configured to run.")
-            return
-
-        middleware: list[Middleware] = []
-        if mcp_settings.api_key:
-            middleware.append(
-                Middleware(AuthMiddleware, api_key=mcp_settings.api_key),
-            )
-        if mcp_settings.allow_origins:
-            middleware.append(
-                Middleware(
-                    CORSMiddleware,
-                    allow_origins=mcp_settings.allow_origins,
-                    allow_methods=["*"],
-                    allow_headers=["*"],
-                ),
-            )
-
+        # Create middleware and Starlette app
+        middleware = _create_middleware(mcp_settings)
         starlette_app = Starlette(
             debug=(mcp_settings.log_level == "DEBUG"),
             routes=all_routes,
             middleware=middleware,
             lifespan=combined_lifespan,
         )
-
         starlette_app.router.redirect_slashes = False
 
+        # Log server URLs
+        _log_server_urls(mcp_settings, default_server_params, named_server_params)
+
+        # Start the server
         config = uvicorn.Config(
             starlette_app,
             host=mcp_settings.bind_host,
@@ -201,28 +265,4 @@ async def run_mcp_server(
             log_level=mcp_settings.log_level.lower(),
         )
         http_server = uvicorn.Server(config)
-
-        # Print out the SSE URLs for all configured servers
-        base_url = f"http://{mcp_settings.bind_host}:{mcp_settings.port}"
-        sse_urls = []
-
-        # Add default server if configured
-        if default_server_params:
-            sse_urls.append(f"{base_url}/sse")
-
-        # Add named servers
-        sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
-
-        # Display the SSE URLs prominently
-        if sse_urls:
-            # Using print directly for user visibility, with noqa to ignore linter warnings
-            logger.info("Serving MCP Servers via SSE:")
-            for url in sse_urls:
-                logger.info("  - %s", url)
-
-        logger.debug(
-            "Serving incoming MCP requests on %s:%s",
-            mcp_settings.bind_host,
-            mcp_settings.port,
-        )
         await http_server.serve()
