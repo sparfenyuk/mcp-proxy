@@ -132,9 +132,20 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         default=False,
     )
     stdio_client_options.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        metavar="LEVEL",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        help="Set the log level. Default is INFO.",
+    )
+    stdio_client_options.add_argument(
         "--debug",
         action=argparse.BooleanOptionalAction,
-        help="Enable debug mode with detailed logging output.",
+        help=(
+            "Enable debug mode with detailed logging output. Equivalent to --log-level DEBUG. "
+            "If both --debug and --log-level are provided, --debug takes precedence."
+        ),
         default=False,
     )
     stdio_client_options.add_argument(
@@ -211,10 +222,10 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _setup_logging(*, debug: bool) -> logging.Logger:
+def _setup_logging(*, level: str, debug: bool) -> logging.Logger:
     """Set up logging configuration and return the logger."""
     logging.basicConfig(
-        level=logging.DEBUG if debug else logging.INFO,
+        level=logging.DEBUG if debug else level,
         format="[%(levelname)1.1s %(asctime)s.%(msecs).03d %(name)s] %(message)s",
     )
     return logging.getLogger(__name__)
@@ -342,7 +353,7 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         port=args_parsed.port if args_parsed.port is not None else args_parsed.sse_port,
         stateless=args_parsed.stateless,
         allow_origins=args_parsed.allow_origin if len(args_parsed.allow_origin) > 0 else None,
-        log_level="DEBUG" if args_parsed.debug else "INFO",
+        log_level="DEBUG" if args_parsed.debug else args_parsed.log_level,
         api_key=args_parsed.api_key,
     )
 
@@ -351,7 +362,7 @@ def main() -> None:
     """Start the client using asyncio."""
     parser = _setup_argument_parser()
     args_parsed = parser.parse_args()
-    logger = _setup_logging(debug=args_parsed.debug)
+    logger = _setup_logging(level=args_parsed.log_level, debug=args_parsed.debug)
 
     # Validate required arguments
     if (

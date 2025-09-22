@@ -359,7 +359,7 @@ services:
 ```bash
 usage: mcp-proxy [-h] [--version] [-H KEY VALUE] [--transport {sse,streamablehttp}]
                  [-e KEY VALUE] [--cwd CWD]
-                 [--pass-environment | --no-pass-environment] [--debug | --no-debug]
+                 [--pass-environment | --no-pass-environment] [--log-level LEVEL] [--debug | --no-debug]
                  [--named-server NAME COMMAND_STRING]
                  [--named-server-config FILE_PATH] [--port PORT] [--host HOST]
                  [--stateless | --no-stateless] [--sse-port SSE_PORT]
@@ -388,7 +388,8 @@ stdio client options:
   --cwd CWD             The working directory to use when spawning the default server process. Named servers inherit the proxy's CWD.
   --pass-environment, --no-pass-environment
                         Pass through all environment variables when spawning all server processes.
-  --debug, --no-debug   Enable debug mode with detailed logging output.
+  --log-level LEVEL     Set the log level. Default is INFO.
+  --debug, --no-debug   Enable debug mode with detailed logging output. Equivalent to --log-level DEBUG. If both --debug and --log-level are provided, --debug takes precedence.
   --named-server NAME COMMAND_STRING
                         Define a named stdio server. NAME is for the URL path /servers/NAME/. COMMAND_STRING is a single string with the command and its arguments (e.g., 'uvx mcp-server-fetch --timeout 10'). These servers inherit the proxy's CWD and environment from --pass-environment.
   --named-server-config FILE_PATH
