@@ -5,10 +5,10 @@ FROM ghcr.io/astral-sh/uv:python3.12-alpine AS uv
 WORKDIR /app
 
 # Enable bytecode compilation
-ENV UV_COMPILE_BYTECODE=1
+ARG UV_COMPILE_BYTECODE=1
 
 # Copy from the cache instead of linking since it's a mounted volume
-ENV UV_LINK_MODE=copy
+ARG UV_LINK_MODE=copy
 
 # Install the project's dependencies using the lockfile and settings
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -18,16 +18,20 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Then, add the rest of the project source code and install it
 # Installing separately from its dependencies allows optimal layer caching
-ADD . /app
+COPY . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
+
+RUN apk add --update --no-cache catatonit
 
 # Final stage with explicit platform specification
 FROM python:3.12-alpine
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
+COPY --from=uv /usr/bin/catatonit /usr/bin/
+COPY --from=uv /usr/libexec/podman/catatonit /usr/libexec/podman/
 
 # Place executables in the environment at the front of the path
 ENV PATH="/app/.venv/bin:$PATH"
 
-ENTRYPOINT ["mcp-proxy"]
+ENTRYPOINT ["catatonit", "--", "mcp-proxy"]
