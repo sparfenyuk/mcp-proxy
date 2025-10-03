@@ -1,5 +1,5 @@
 # Build stage with explicit platform specification
-FROM ghcr.io/astral-sh/uv:python3.12-alpine AS uv
+FROM ghcr.io/astral-sh/uv:python3.13-alpine AS uv
 
 # Install the project into /app
 WORKDIR /app
@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 RUN apk add --update --no-cache catatonit
 
 # Final stage with explicit platform specification
-FROM python:3.12-alpine
+FROM python:3.13-alpine
 
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 COPY --from=uv /usr/bin/catatonit /usr/bin/

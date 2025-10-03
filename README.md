@@ -4,7 +4,6 @@
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/mcp-proxy)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-proxy)
 [![codecov](https://codecov.io/gh/sparfenyuk/mcp-proxy/graph/badge.svg?token=31VV9L7AZQ)](https://codecov.io/gh/sparfenyuk/mcp-proxy)
-[![smithery badge](https://smithery.ai/badge/mcp-proxy)](https://smithery.ai/server/mcp-proxy)
 
 - [mcp-proxy](#mcp-proxy)
   - [About](#about)
@@ -17,7 +16,6 @@
   - [Named Servers](#named-servers)
   - [Authentication](#authentication)
   - [Installation](#installation)
-    - [Installing via Smithery](#installing-via-smithery)
     - [Installing via PyPI](#installing-via-pypi)
     - [Installing via Github repository (latest)](#installing-via-github-repository-latest)
     - [Installing as container](#installing-as-container)
@@ -118,21 +116,21 @@ separator.
 
 Arguments
 
-| Name                                 | Required                   | Description                                                                                 | Example                                     |
-|--------------------------------------|----------------------------|---------------------------------------------------------------------------------------------|---------------------------------------------|
-| `command_or_url`                     | Yes                        | The command to spawn the MCP stdio server                                                   | uvx mcp-server-fetch                        |
-| `--port`                             | No, random available       | The MCP server port to listen on                                                            | 8080                                        |
-| `--host`                             | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on                                      | 0.0.0.0                                     |
+| Name                                 | Required                   | Description                                                                                   | Example                                     |
+| ------------------------------------ | -------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `command_or_url`                     | Yes                        | The command to spawn the MCP stdio server                                                     | uvx mcp-server-fetch                        |
+| `--port`                             | No, random available       | The MCP server port to listen on                                                              | 8080                                        |
+| `--host`                             | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on                                        | 0.0.0.0                                     |
 | `--env`                              | No                         | Additional environment variables to pass to the MCP stdio server. Can be used multiple times. | FOO BAR                                     |
 | `--cwd`                              | No                         | The working directory to pass to the MCP stdio server process.                              | /tmp                                        |
 | `--pass-environment`                 | No                         | Pass through all environment variables when spawning the server                             | --no-pass-environment                       |
 | `--allow-origin`                     | No                         | Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed. | --allow-origin "\*"                           |
 | `--api-key`                          | No                         | API key for authentication. Can also be set via MCP_PROXY_API_KEY env var.                 | --api-key YOUR_SECRET_KEY                  |
-| `--stateless`                        | No                         | Enable stateless mode for streamable http transports. Default is False                      | --no-stateless                              |
-| `--named-server NAME COMMAND_STRING` | No                         | Defines a named stdio server.                                                               | --named-server fetch 'uvx mcp-server-fetch' |
-| `--named-server-config FILE_PATH`    | No                         | Path to a JSON file defining named stdio servers.                                           | --named-server-config /path/to/servers.json |
-| `--sse-port` (deprecated)            | No, random available       | The SSE server port to listen on                                                            | 8080                                        |
-| `--sse-host` (deprecated)            | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on                                      | 0.0.0.0                                     |
+| `--stateless`                        | No                         | Enable stateless mode for streamable http transports. Default is False                        | --no-stateless                              |
+| `--named-server NAME COMMAND_STRING` | No                         | Defines a named stdio server.                                                                 | --named-server fetch 'uvx mcp-server-fetch' |
+| `--named-server-config FILE_PATH`    | No                         | Path to a JSON file defining named stdio servers.                                             | --named-server-config /path/to/servers.json |
+| `--sse-port` (deprecated)            | No, random available       | The SSE server port to listen on                                                              | 8080                                        |
+| `--sse-host` (deprecated)            | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on                                        | 0.0.0.0                                     |
 
 ### 2.2 Example usage
 
@@ -254,14 +252,6 @@ mcp-proxy --port 8080 uvx mcp-server-fetch
 - OPTIONS requests - CORS preflight requests
 
 ## Installation
-
-### Installing via Smithery
-
-To install MCP Proxy for Claude Desktop automatically via [Smithery](https://smithery.ai/server/mcp-proxy):
-
-```bash
-npx -y @smithery/cli install mcp-proxy --client claude
-```
 
 ### Installing via PyPI
 

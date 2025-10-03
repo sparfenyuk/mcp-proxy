@@ -1,6 +1,19 @@
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/optimizing-pr-creation-version-updates#setting-up-a-cooldown-period-for-dependency-updates
+
 version: 2
 updates:
-  - package-ecosystem: "pip"
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups: # https://docs.github.com/en/code-security/dependabot/working-with-dependabot/dependabot-options-reference#groups--
+      actions:
+        patterns: ["*"] # Combine all images of last week
+  - package-ecosystem: "uv"
     directory: "/"
     schedule:
       interval: "daily"
