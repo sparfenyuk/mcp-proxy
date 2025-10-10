@@ -251,7 +251,7 @@ docker run --rm -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
 
 - **Problem**: Claude Desktop can't start the server: ENOENT code in the logs
 
-  **Solution**: Try to use the full path to the binary. To do so, open a terminal and run the command`where mcp-proxy` (
+  **Solution**: Try to use the full path to the binary. To do so, open a terminal and run the command`which mcp-proxy` (
   macOS, Linux) or `where.exe mcp-proxy` (Windows). Then, use the output path as a value for 'command' attribute:
   ```json
     "fetch": {
