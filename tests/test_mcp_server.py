@@ -58,12 +58,14 @@ def create_starlette_app(
         async with http_manager.run():
             yield
 
-    return Starlette(
+    app = Starlette(
         debug=debug,
         routes=routes,
         middleware=middleware,
         lifespan=lifespan,
     )
+    app.router.redirect_slashes = False
+    return app
 
 
 class BackgroundServer(uvicorn.Server):
@@ -149,11 +151,12 @@ async def test_sse_transport() -> None:
             assert response.prompts[0].name == "prompt1"
 
 
-async def test_http_transport() -> None:
+@pytest.mark.parametrize("path_suffix", ["/mcp/", "/mcp"])
+async def test_http_transport(path_suffix: str) -> None:
     """Test HTTP transport layer functionality."""
     server = make_background_server(debug=True)
     async with server.run_in_background():
-        http_url = f"{server.url}/mcp/"
+        http_url = f"{server.url}{path_suffix}"
         async with (
             streamablehttp_client(url=http_url) as (read, write, _),
             ClientSession(read, write) as session,
