@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import os
+import requests
 import shlex
 import sys
 import typing as t
@@ -238,6 +239,24 @@ def _handle_sse_client_mode(
     headers = dict(args_parsed.headers)
     if api_access_token := os.getenv("API_ACCESS_TOKEN", None):
         headers["Authorization"] = f"Bearer {api_access_token}"
+
+    client_id = os.getenv("CLIENT_ID", None)
+    client_secret = os.getenv("CLIENT_SECRET", None)
+    url = os.getenv("TOKEN_URL", None)
+
+    if client_id and client_secret and url:
+        grant_type = "client_credentials"
+        headersForTokenCall = {
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        payload = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": grant_type
+        }
+        response = requests.post(url, headers=headersForTokenCall, data=payload)
+        headers["Authorization"] = f"Bearer {response.json()['access_token']}"
+        print(headers["Authorization"])
 
     if args_parsed.transport == "streamablehttp":
         asyncio.run(run_streamablehttp_client(args_parsed.command_or_url, headers=headers))
