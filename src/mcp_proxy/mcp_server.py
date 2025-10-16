@@ -116,7 +116,7 @@ async def run_mcp_server(
         @contextlib.asynccontextmanager
         async def combined_lifespan(_app: Starlette) -> AsyncIterator[None]:
             logger.info("Main application lifespan starting...")
-            # All http_session_managers' .run() are already entered into the stack
+            # All session manager lifespans are already managed by the stack
             yield
             logger.info("Main application lifespan shutting down...")
 
@@ -135,7 +135,7 @@ async def run_mcp_server(
                 proxy,
                 stateless_instance=mcp_settings.stateless,
             )
-            await stack.enter_async_context(http_manager.run())  # Manage lifespan by calling run()
+            await stack.enter_async_context(http_manager.run())
             all_routes.extend(instance_routes)
             _global_status["server_instances"]["default"] = "configured"
 
@@ -155,9 +155,7 @@ async def run_mcp_server(
                 proxy_named,
                 stateless_instance=mcp_settings.stateless,
             )
-            await stack.enter_async_context(
-                http_manager_named.run(),
-            )  # Manage lifespan by calling run()
+            await stack.enter_async_context(http_manager_named.run())
 
             # Mount these routes under /servers/<name>/
             server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)

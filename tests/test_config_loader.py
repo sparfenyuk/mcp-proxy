@@ -3,9 +3,10 @@
 import json
 import shutil
 import tempfile
+import typing as t
 from collections.abc import Callable, Generator
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from mcp.client.stdio import StdioServerParameters
@@ -14,11 +15,11 @@ from mcp_proxy.config_loader import load_named_server_configs_from_file
 
 
 @pytest.fixture
-def create_temp_config_file() -> Generator[Callable[[dict], str], None, None]:
+def create_temp_config_file() -> Generator[Callable[[dict[str, t.Any]], str], None, None]:
     """Creates a temporary JSON config file and returns its path."""
     temp_files: list[str] = []
 
-    def _create_temp_config_file(config_content: dict) -> str:
+    def _create_temp_config_file(config_content: dict[str, t.Any]) -> str:
         with tempfile.NamedTemporaryFile(
             mode="w",
             delete=False,
@@ -36,7 +37,7 @@ def create_temp_config_file() -> Generator[Callable[[dict], str], None, None]:
             path.unlink()
 
 
-def test_load_valid_config(create_temp_config_file: Callable[[dict], str]) -> None:
+def test_load_valid_config(create_temp_config_file: Callable[[dict[str, t.Any]], str]) -> None:
     """Test loading a valid configuration file."""
     config_content = {
         "mcpServers": {
@@ -72,7 +73,7 @@ def test_load_valid_config(create_temp_config_file: Callable[[dict], str]) -> No
 
 
 def test_load_config_with_not_enabled_server(
-    create_temp_config_file: Callable[[dict], str],
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
 ) -> None:
     """Test loading a configuration with disabled servers."""
     config_content = {
@@ -147,7 +148,7 @@ def test_load_example_fetch_config_if_uvx_exists() -> None:
 
 
 def test_invalid_config_format_missing_mcpservers(
-    create_temp_config_file: Callable[[dict], str],
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
 ) -> None:
     """Test handling of configuration files missing the mcpServers key."""
     config_content = {"some_other_key": "value"}
@@ -159,8 +160,8 @@ def test_invalid_config_format_missing_mcpservers(
 
 @patch("mcp_proxy.config_loader.logger")
 def test_invalid_server_entry_not_dict(
-    mock_logger: object,
-    create_temp_config_file: Callable[[dict], str],
+    mock_logger: Mock,
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
 ) -> None:
     """Test handling of server entries that are not dictionaries."""
     config_content = {"mcpServers": {"server1": "not_a_dict"}}
@@ -177,8 +178,8 @@ def test_invalid_server_entry_not_dict(
 
 @patch("mcp_proxy.config_loader.logger")
 def test_server_entry_missing_command(
-    mock_logger: object,
-    create_temp_config_file: Callable[[dict], str],
+    mock_logger: Mock,
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
 ) -> None:
     """Test handling of server entries missing the command field."""
     config_content = {"mcpServers": {"server_no_command": {"args": ["arg1"]}}}
@@ -193,8 +194,8 @@ def test_server_entry_missing_command(
 
 @patch("mcp_proxy.config_loader.logger")
 def test_server_entry_invalid_args_type(
-    mock_logger: object,
-    create_temp_config_file: Callable[[dict], str],
+    mock_logger: Mock,
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
 ) -> None:
     """Test handling of server entries with invalid args type."""
     config_content = {
@@ -211,17 +212,19 @@ def test_server_entry_invalid_args_type(
     )
 
 
-def test_empty_mcpservers_dict(create_temp_config_file: Callable[[dict], str]) -> None:
+def test_empty_mcpservers_dict(create_temp_config_file: Callable[[dict[str, t.Any]], str]) -> None:
     """Test handling of configuration files with empty mcpServers dictionary."""
-    config_content = {"mcpServers": {}}
+    config_content: dict[str, t.Any] = {"mcpServers": {}}
     tmp_config_path = create_temp_config_file(config_content)
     loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
     assert len(loaded_params) == 0
 
 
-def test_config_file_is_empty_json_object(create_temp_config_file: Callable[[dict], str]) -> None:
+def test_config_file_is_empty_json_object(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+) -> None:
     """Test handling of configuration files with empty JSON objects."""
-    config_content = {}  # Empty JSON object
+    config_content: dict[str, t.Any] = {}  # Empty JSON object
     tmp_config_path = create_temp_config_file(config_content)
     with pytest.raises(ValueError, match="Missing 'mcpServers' key"):
         load_named_server_configs_from_file(tmp_config_path, {})
