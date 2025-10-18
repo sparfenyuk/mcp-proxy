@@ -305,9 +305,11 @@ services:
 ## Command line arguments
 
 ```bash
-usage: mcp-proxy [-h] [--version] [-H KEY VALUE] [--transport {sse,streamablehttp}]
-                 [-e KEY VALUE] [--cwd CWD]
-                 [--pass-environment | --no-pass-environment] [--log-level LEVEL] [--debug | --no-debug]
+usage: mcp-proxy [-h] [--version] [-H KEY VALUE]
+                 [--transport {sse,streamablehttp}] [--verify-ssl [VALUE]]
+                 [--no-verify-ssl] [-e KEY VALUE] [--cwd CWD]
+                 [--pass-environment | --no-pass-environment]
+                 [--log-level LEVEL] [--debug | --no-debug]
                  [--named-server NAME COMMAND_STRING]
                  [--named-server-config FILE_PATH] [--port PORT] [--host HOST]
                  [--stateless | --no-stateless] [--sse-port SSE_PORT]
@@ -329,6 +331,8 @@ SSE/StreamableHTTP client options:
                         Headers to pass to the SSE server. Can be used multiple times.
   --transport {sse,streamablehttp}
                         The transport to use for the client. Default is SSE.
+  --verify-ssl [VALUE]  Control SSL verification when acting as a client. Use without a value to force verification, pass 'false' to disable, or provide a path to a PEM bundle.
+  --no-verify-ssl       Disable SSL verification (alias for --verify-ssl false).
 
 stdio client options:
   args                  Any extra arguments to the command to spawn the default server. Ignored if only named servers are defined.
@@ -355,14 +359,13 @@ SSE server options:
 
 Examples:
   mcp-proxy http://localhost:8080/sse
+  mcp-proxy --no-verify-ssl https://server.local/sse
   mcp-proxy --transport streamablehttp http://localhost:8080/mcp
   mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
-  mcp-proxy --port 8080 -- my-default-command --arg1 value1
-  mcp-proxy --port 8080 --named-server fetch1 'uvx mcp-server-fetch' --named-server tool2 'my-custom-tool --verbose'
-  mcp-proxy --port 8080 --named-server-config /path/to/servers.json
-  mcp-proxy --port 8080 --named-server-config /path/to/servers.json -- my-default-command --arg1
-  mcp-proxy --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE -- my-default-command
-  mcp-proxy --port 8080 --allow-origin='*' -- my-default-command
+  mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2
+  mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080
+  mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE
+  mcp-proxy your-command --port 8080 --allow-origin='*'
 ```
 
 ### Example config file
