@@ -4,16 +4,17 @@
 import asyncio
 import contextlib
 import typing as t
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import pytest
 import uvicorn
+from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.server import FastMCP, Server
-from mcp.types import TextContent
+from mcp.server import Server
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -92,22 +93,44 @@ class BackgroundServer(uvicorn.Server):
         return f"http://{hostport[0]}:{hostport[1]}"
 
 
-def make_background_server(**kwargs) -> BackgroundServer:  # noqa: ANN003
+def make_background_server(*, debug: bool = False, stateless: bool = False) -> BackgroundServer:
     """Create a BackgroundServer instance with specified parameters."""
-    mcp = FastMCP("TestServer")
+    mcp_server: Server[object, t.Any] = Server("TestServer")
 
-    @mcp.prompt(name="prompt1")
-    async def list_prompts() -> str:
-        return "hello world"
+    @mcp_server.list_prompts()  # type: ignore[misc,no-untyped-call]
+    async def list_prompts() -> list[types.Prompt]:
+        return [types.Prompt(name="prompt1")]
 
-    @mcp.tool(name="echo")
-    async def call_tool(message: str) -> str:
-        return f"Echo: {message}"
+    @mcp_server.list_tools()  # type: ignore[misc,no-untyped-call]
+    async def list_tools() -> list[types.Tool]:
+        return [
+            types.Tool(
+                name="echo",
+                description="Echo tool",
+                inputSchema={
+                    "type": "object",
+                    "properties": {"message": {"type": "string"}},
+                    "required": ["message"],
+                },
+            ),
+        ]
+
+    @mcp_server.call_tool()  # type: ignore[misc]
+    async def call_tool(
+        name: str,
+        arguments: dict[str, t.Any] | None,
+    ) -> list[types.Content]:
+        assert name == "echo"
+        message_value = ""
+        if arguments:
+            message_value = str(arguments.get("message", ""))
+        return [types.TextContent(type="text", text=f"Echo: {message_value}")]
 
     app = create_starlette_app(
-        mcp._mcp_server,  # noqa: SLF001
+        mcp_server,
         allow_origins=["*"],
-        **kwargs,
+        debug=debug,
+        stateless=stateless,
     )
 
     config = uvicorn.Config(app, port=0, log_level="info")
@@ -143,7 +166,7 @@ async def test_http_transport() -> None:
             for i in range(3):
                 tool_result = await session.call_tool("echo", {"message": f"test_{i}"})
                 assert len(tool_result.content) == 1
-                assert isinstance(tool_result.content[0], TextContent)
+                assert isinstance(tool_result.content[0], types.TextContent)
                 assert tool_result.content[0].text == f"Echo: test_{i}"
 
 
@@ -164,7 +187,7 @@ async def test_stateless_http_transport() -> None:
             for i in range(3):
                 tool_result = await session.call_tool("echo", {"message": f"test_{i}"})
                 assert len(tool_result.content) == 1
-                assert isinstance(tool_result.content[0], TextContent)
+                assert isinstance(tool_result.content[0], types.TextContent)
                 assert tool_result.content[0].text == f"Echo: test_{i}"
 
 
@@ -194,20 +217,9 @@ def mock_stdio_params() -> StdioServerParameters:
     )
 
 
-class AsyncContextManagerMock:  # noqa: D101
-    def __init__(self, mock) -> None:  # noqa: ANN001, D107
-        self.mock = mock
-
-    async def __aenter__(self):  # noqa: ANN204, D105
-        return self.mock
-
-    async def __aexit__(self, *args):  # noqa: ANN002, ANN204, D105
-        pass
-
-
 def setup_async_context_mocks() -> tuple[
-    AsyncContextManagerMock,
-    AsyncContextManagerMock,
+    contextlib.AbstractContextManager[tuple[AsyncMock, AsyncMock]],
+    contextlib.AbstractContextManager[tuple[AsyncMock, AsyncMock]],
     AsyncMock,
     MagicMock,
     list[MagicMock],
@@ -221,12 +233,13 @@ def setup_async_context_mocks() -> tuple[
 
     # Setup HTTP manager mock
     mock_http_manager = MagicMock()
-    mock_http_manager.run.return_value = AsyncContextManagerMock(None)
+    session_manager = create_autospec(StreamableHTTPSessionManager, spec_set=True)
+    mock_http_manager.run.return_value = contextlib.nullcontext(session_manager)
     mock_routes = [MagicMock()]
 
     return (
-        AsyncContextManagerMock(mock_streams),
-        AsyncContextManagerMock(mock_session),
+        contextlib.nullcontext(mock_streams),
+        contextlib.nullcontext(mock_session),
         mock_session,
         mock_http_manager,
         mock_routes,

@@ -32,6 +32,16 @@ SessionContextManager = Callable[[Server[object]], AbstractAsyncContextManager[C
 in_memory: SessionContextManager = create_connected_server_and_client_session
 
 
+@pytest.fixture
+def tool() -> types.Tool:
+    """Provide a default tool definition for tests that do not override it."""
+    return types.Tool(
+        name="tool",
+        description="tool-description",
+        inputSchema=TOOL_INPUT_SCHEMA,
+    )
+
+
 @asynccontextmanager
 async def proxy(server: Server[object]) -> AsyncGenerator[ClientSession, None]:
     """Create a connection to the server through the proxy server."""
@@ -91,10 +101,16 @@ def server_can_list_tools(server: Server[object], tool: types.Tool) -> Server[ob
 @pytest.fixture
 def server_can_call_tool(
     server_can_list_tools: Server[object],
-    tool: Callable[..., t.Any],
+    tool_callback: Callable[..., t.Awaitable[t.Iterable[types.Content]]],
 ) -> Server[object]:
     """Return a server instance with tools."""
-    server_can_list_tools.call_tool()(tool)  # type: ignore[no-untyped-call]
+
+    @server_can_list_tools.call_tool()  # type: ignore[misc]
+    async def _wrapped_call_tool(
+        name: str,
+        arguments: dict[str, t.Any] | None,
+    ) -> t.Iterable[types.Content]:
+        return await tool_callback(name, arguments or {})
 
     return server_can_list_tools
 
@@ -185,7 +201,15 @@ def server_can_complete(
     ],
 ) -> Server[object]:
     """Return a server instance with logging capabilities."""
-    server.completion()(complete_callback)  # type: ignore[no-untyped-call]
+
+    @server.completion()  # type: ignore[no-untyped-call,misc]
+    async def _completion(
+        reference: types.PromptReference | types.ResourceReference,
+        argument: types.CompletionArgument,
+        _context: object | None = None,
+    ) -> types.Completion | None:
+        return await complete_callback(reference, argument)
+
     return server
 
 
@@ -268,11 +292,11 @@ async def test_set_logging_error(
         logging_level_callback.reset_mock()  # Reset the mock for the next test case
 
 
-@pytest.mark.parametrize("tool", [AsyncMock()])
+@pytest.mark.parametrize("tool_callback", [AsyncMock()])
 async def test_call_tool(
     session_generator: SessionContextManager,
     server_can_call_tool: Server[object],
-    tool: AsyncMock,
+    tool_callback: AsyncMock,
 ) -> None:
     """Test call_tool."""
     async with session_generator(server_can_call_tool) as session:
@@ -284,13 +308,13 @@ async def test_call_tool(
         assert not result.capabilities.resources
         assert not result.capabilities.logging
 
-        tool.return_value = []
+        tool_callback.return_value = []
         call_tool_result = await session.call_tool("tool", {})
         assert call_tool_result.content == []
         assert not call_tool_result.isError
 
-        tool.assert_called_once_with("tool", {})
-        tool.reset_mock()
+        tool_callback.assert_called_once_with("tool", {})
+        tool_callback.reset_mock()
 
 
 @pytest.mark.parametrize(
@@ -493,11 +517,11 @@ async def test_complete(
         complete_callback.reset_mock()
 
 
-@pytest.mark.parametrize("tool", [AsyncMock()])
+@pytest.mark.parametrize("tool_callback", [AsyncMock()])
 async def test_call_tool_with_error(
     session_generator: SessionContextManager,
     server_can_call_tool: Server[object],
-    tool: AsyncMock,
+    tool_callback: AsyncMock,
 ) -> None:
     """Test call_tool."""
     async with session_generator(server_can_call_tool) as session:
@@ -509,7 +533,7 @@ async def test_call_tool_with_error(
         assert not result.capabilities.resources
         assert not result.capabilities.logging
 
-        tool.side_effect = Exception("Error")
+        tool_callback.side_effect = Exception("Error")
 
         call_tool_result = await session.call_tool("tool", {})
         assert call_tool_result.isError
