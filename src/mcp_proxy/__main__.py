@@ -19,9 +19,13 @@ from importlib.metadata import version
 from mcp.client.stdio import StdioServerParameters
 
 from .config_loader import load_named_server_configs_from_file
+from .httpx_logging_patch import patch_mcp_http_client
 from .mcp_server import MCPServerSettings, run_mcp_server
 from .sse_client import run_sse_client
 from .streamablehttp_client import run_streamablehttp_client
+
+patch_mcp_http_client()
+
 
 # Deprecated env var. Here for backwards compatibility.
 SSE_URL: t.Final[str | None] = os.getenv(
