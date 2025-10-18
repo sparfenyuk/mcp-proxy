@@ -30,6 +30,20 @@ SSE_URL: t.Final[str | None] = os.getenv(
 )
 
 
+def _normalize_verify_ssl(value: str | bool | None) -> bool | str | None:
+    """Normalize the verify_ssl argument into bool, str path, or None."""
+    if isinstance(value, bool) or value is None:
+        return value
+
+    lowered = value.strip().lower()
+    if lowered in {"1", "true", "yes", "on"}:
+        return True
+    if lowered in {"0", "false", "no", "off"}:
+        return False
+
+    return value
+
+
 def _setup_argument_parser() -> argparse.ArgumentParser:
     """Set up and return the argument parser for the MCP proxy."""
     parser = argparse.ArgumentParser(
@@ -37,6 +51,7 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
         epilog=(
             "Examples:\n"
             "  mcp-proxy http://localhost:8080/sse\n"
+            "  mcp-proxy --no-verify-ssl https://server.local/sse\n"
             "  mcp-proxy --transport streamablehttp http://localhost:8080/mcp\n"
             "  mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse\n"
             "  mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2\n"
@@ -93,6 +108,25 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         choices=["sse", "streamablehttp"],
         default="sse",  # For backwards compatibility
         help="The transport to use for the client. Default is SSE.",
+    )
+    client_group.add_argument(
+        "--verify-ssl",
+        nargs="?",
+        const=True,
+        default=None,
+        metavar="VALUE",
+        dest="verify_ssl",
+        help=(
+            "Control SSL verification when acting as a client. Use without a value to "
+            "force verification, pass 'false' to disable, or provide a path to a PEM bundle."
+        ),
+    )
+    client_group.add_argument(
+        "--no-verify-ssl",
+        dest="verify_ssl",
+        action="store_const",
+        const=False,
+        help=("Disable SSL verification (alias for --verify-ssl false)."),
     )
 
     stdio_client_options = parser.add_argument_group("stdio client options")
@@ -226,6 +260,7 @@ def _setup_logging(*, level: str, debug: bool) -> logging.Logger:
 def _handle_sse_client_mode(
     args_parsed: argparse.Namespace,
     logger: logging.Logger,
+    verify_ssl: bool | str | None = None,
 ) -> None:
     """Handle SSE/StreamableHTTP client mode operation."""
     if args_parsed.named_server_definitions:
@@ -240,9 +275,17 @@ def _handle_sse_client_mode(
         headers["Authorization"] = f"Bearer {api_access_token}"
 
     if args_parsed.transport == "streamablehttp":
-        asyncio.run(run_streamablehttp_client(args_parsed.command_or_url, headers=headers))
+        asyncio.run(
+            run_streamablehttp_client(
+                args_parsed.command_or_url,
+                headers=headers,
+                verify_ssl=verify_ssl,
+            ),
+        )
     else:
-        asyncio.run(run_sse_client(args_parsed.command_or_url, headers=headers))
+        asyncio.run(
+            run_sse_client(args_parsed.command_or_url, headers=headers, verify_ssl=verify_ssl),
+        )
 
 
 def _configure_default_server(
@@ -372,7 +415,8 @@ def main() -> None:
     if args_parsed.command_or_url and args_parsed.command_or_url.startswith(
         ("http://", "https://"),
     ):
-        _handle_sse_client_mode(args_parsed, logger)
+        verify_ssl = _normalize_verify_ssl(getattr(args_parsed, "verify_ssl", None))
+        _handle_sse_client_mode(args_parsed, logger, verify_ssl=verify_ssl)
         return
 
     # Start stdio client(s) and expose as an SSE server
