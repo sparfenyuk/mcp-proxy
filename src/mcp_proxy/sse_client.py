@@ -5,11 +5,12 @@ from typing import Any
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.server.stdio import stdio_server
+import httpx
 
 from .proxy_server import create_proxy_server
 
 
-async def run_sse_client(url: str, headers: dict[str, Any] | None = None) -> None:
+async def run_sse_client(url: str, headers: dict[str, Any] | None = None, auth: httpx.Auth | None = None) -> None:
     """Run the SSE client.
 
     Args:
@@ -17,7 +18,8 @@ async def run_sse_client(url: str, headers: dict[str, Any] | None = None) -> Non
         headers: Headers for connecting to MCP server.
 
     """
-    async with sse_client(url=url, headers=headers) as streams, ClientSession(*streams) as session:
+
+    async with sse_client(url=url, headers=headers, auth=auth) as streams, ClientSession(*streams) as session:
         app = await create_proxy_server(session)
         async with stdio_server() as (read_stream, write_stream):
             await app.run(
