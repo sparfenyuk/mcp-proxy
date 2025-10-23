@@ -5,11 +5,11 @@ from typing import Any
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.stdio import stdio_server
-
+import httpx
 from .proxy_server import create_proxy_server
 
 
-async def run_streamablehttp_client(url: str, headers: dict[str, Any] | None = None) -> None:
+async def run_streamablehttp_client(url: str, headers: dict[str, Any] | None = None, auth: httpx.Auth | None = None) -> None:
     """Run the SSE client.
 
     Args:
@@ -18,7 +18,7 @@ async def run_streamablehttp_client(url: str, headers: dict[str, Any] | None = N
 
     """
     async with (
-        streamablehttp_client(url=url, headers=headers) as (read, write, _),
+        streamablehttp_client(url=url, headers=headers, auth=auth) as (read, write, _),
         ClientSession(read, write) as session,
     ):
         app = await create_proxy_server(session)

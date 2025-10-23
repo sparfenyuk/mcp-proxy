@@ -16,6 +16,7 @@ import sys
 import typing as t
 from importlib.metadata import version
 
+from httpx_auth import OAuth2ClientCredentials
 from mcp.client.stdio import StdioServerParameters
 
 from .config_loader import load_named_server_configs_from_file
@@ -239,10 +240,23 @@ def _handle_sse_client_mode(
     if api_access_token := os.getenv("API_ACCESS_TOKEN", None):
         headers["Authorization"] = f"Bearer {api_access_token}"
 
+    # Collect client credentials and token url if provided
+    client_id = os.getenv("CLIENT_ID")
+    client_secret = os.getenv("CLIENT_SECRET")
+    token_url = os.getenv("TOKEN_URL")
+
+    auth = None
+    if client_id and client_secret and token_url:
+        auth = OAuth2ClientCredentials(
+            client_id=client_id,
+            client_secret=client_secret,
+            token_url=token_url,
+        )
+
     if args_parsed.transport == "streamablehttp":
-        asyncio.run(run_streamablehttp_client(args_parsed.command_or_url, headers=headers))
+        asyncio.run(run_streamablehttp_client(args_parsed.command_or_url, headers=headers, auth=auth))
     else:
-        asyncio.run(run_sse_client(args_parsed.command_or_url, headers=headers))
+        asyncio.run(run_sse_client(args_parsed.command_or_url, headers=headers, auth=auth))
 
 
 def _configure_default_server(
