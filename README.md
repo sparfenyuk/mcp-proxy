@@ -66,6 +66,9 @@ Environment Variables
 | Name               | Required | Description                                                                  | Example    |
 | ------------------ | -------- | ---------------------------------------------------------------------------- | ---------- |
 | `API_ACCESS_TOKEN` | No       | Can be used instead of `--headers Authorization 'Bearer <API_ACCESS_TOKEN>'` | YOUR_TOKEN |
+| `CLIENT_ID`        | No       | OAuth2 client ID for authentication                                          | your_client_id |
+| `CLIENT_SECRET`    | No       | OAuth2 client secret for authentication                                      | your_client_secret |
+| `TOKEN_URL`        | No       | OAuth2 token endpoint URL for authentication                                 | https://auth.example.com/oauth/token |
 
 ### 1.2 Example usage
 
