@@ -19,7 +19,7 @@ from importlib.metadata import version
 from mcp.client.stdio import StdioServerParameters
 
 from .config_loader import load_named_server_configs_from_file
-from .mcp_server import MCPServerSettings, run_mcp_server
+from .mcp_server import MCPServerSettings, run_mcp_server_with_dynamic_tokens
 from .sse_client import run_sse_client
 from .streamablehttp_client import run_streamablehttp_client
 
@@ -278,7 +278,7 @@ def _load_named_servers_from_config(
     config_path: str,
     base_env: dict[str, str],
     logger: logging.Logger,
-) -> dict[str, StdioServerParameters]:
+) -> tuple[dict[str, StdioServerParameters], dict[str, dict[str, str]]]:
     """Load named server configurations from a file."""
     try:
         return load_named_server_configs_from_file(config_path, base_env)
@@ -388,12 +388,13 @@ def main() -> None:
 
     # Configure named servers
     named_stdio_params: dict[str, StdioServerParameters] = {}
+    header_mappings: dict[str, dict[str, str]] = {}
     if args_parsed.named_server_config:
         if args_parsed.named_server_definitions:
             logger.warning(
                 "--named-server CLI arguments are ignored when --named-server-config is provided.",
             )
-        named_stdio_params = _load_named_servers_from_config(
+        named_stdio_params, header_mappings = _load_named_servers_from_config(
             args_parsed.named_server_config,
             base_env,
             logger,
@@ -416,9 +417,10 @@ def main() -> None:
     # Create MCP server settings and run the server
     mcp_settings = _create_mcp_settings(args_parsed)
     asyncio.run(
-        run_mcp_server(
+        run_mcp_server_with_dynamic_tokens(
             default_server_params=default_stdio_params,
             named_server_params=named_stdio_params,
+            header_mappings=header_mappings,
             mcp_settings=mcp_settings,
         ),
     )
