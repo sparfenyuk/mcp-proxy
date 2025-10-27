@@ -223,6 +223,18 @@ wheels = [
 ]
 
 [[package]]
+name = "httpx-auth"
+version = "0.23.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a8/d4/6bd616f89d1ce43f602b62ec274e33beee6c2bce3d68396e692daafdb57d/httpx_auth-0.23.1.tar.gz", hash = "sha256:27b5a6022ad1b41a303b8737fa2e3e4bce6bbbe7ab67fed0b261359be62e0434", size = 121418, upload-time = "2025-01-07T18:47:20.05Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/2f/23/a72f91bea596b522ac297b948ffee6decdedb535c034fca8062bd72981ce/httpx_auth-0.23.1-py3-none-any.whl", hash = "sha256:04f8bd0824efe3d9fb79690cc670b0da98ea809babb7aea04a72f334d4fd5ec5", size = 45328, upload-time = "2025-01-07T18:47:18.694Z" },
+]
+
+[[package]]
 name = "httpx-sse"
 version = "0.4.3"
 source = { registry = "https://pypi.org/simple" }
@@ -303,6 +315,7 @@ name = "mcp-proxy"
 version = "0.10.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx-auth" },
     { name = "mcp" },
     { name = "uvicorn" },
 ]
@@ -317,6 +330,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx-auth", specifier = ">=0.22.0" },
     { name = "mcp", specifier = ">=1.17.0" },
     { name = "uvicorn", specifier = ">=0.34.0" },
 ]
