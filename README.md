@@ -60,6 +60,9 @@ Arguments
 | `command_or_url` | Yes      | The MCP server SSE endpoint to connect to                                                                         | http://example.io/sse                         |
 | `--headers`      | No       | Headers to use for the MCP server SSE connection                                                                  | Authorization 'Bearer my-secret-access-token' |
 | `--transport`    | No       | Decides which transport protocol to use when connecting to an MCP server. Can be either 'sse' or 'streamablehttp' | streamablehttp                                |
+| `--client-id`    | No       | OAuth2 client ID for authentication                                                                               | your_client_id                                |
+| `--client-secret`| No       | OAuth2 client secret for authentication                                                                           | your_client_secret                            |
+| `--token-url`    | No       | OAuth2 token endpoint URL for authentication                                                                      | https://auth.example.com/oauth/token          |
 
 Environment Variables
 
@@ -308,6 +311,7 @@ services:
 usage: mcp-proxy [-h] [--version] [-H KEY VALUE]
                  [--transport {sse,streamablehttp}] [--verify-ssl [VALUE]]
                  [--no-verify-ssl] [-e KEY VALUE] [--cwd CWD]
+                 [--client-id CLIENT_ID] [--client-secret CLIENT_SECRET] [--token-url TOKEN_URL]
                  [--pass-environment | --no-pass-environment]
                  [--log-level LEVEL] [--debug | --no-debug]
                  [--named-server NAME COMMAND_STRING]
@@ -333,6 +337,12 @@ SSE/StreamableHTTP client options:
                         The transport to use for the client. Default is SSE.
   --verify-ssl [VALUE]  Control SSL verification when acting as a client. Use without a value to force verification, pass 'false' to disable, or provide a path to a PEM bundle.
   --no-verify-ssl       Disable SSL verification (alias for --verify-ssl false).
+  --client-id CLIENT_ID
+                        OAuth2 client ID for authentication
+  --client-secret CLIENT_SECRET
+                        OAuth2 client secret for authentication
+  --token-url TOKEN_URL
+                        OAuth2 token URL for authentication
 
 stdio client options:
   args                  Any extra arguments to the command to spawn the default server. Ignored if only named servers are defined.
@@ -362,6 +372,7 @@ Examples:
   mcp-proxy --no-verify-ssl https://server.local/sse
   mcp-proxy --transport streamablehttp http://localhost:8080/mcp
   mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
+  mcp-proxy --client-id CLIENT_ID --client-secret CLIENT_SECRET --token-url https://auth.example.com/token http://localhost:8080/sse
   mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2
   mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080
   mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE

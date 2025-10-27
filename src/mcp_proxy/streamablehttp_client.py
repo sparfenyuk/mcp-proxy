@@ -3,6 +3,7 @@
 from functools import partial
 from typing import Any
 
+import httpx
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.stdio import stdio_server
@@ -14,13 +15,15 @@ from .proxy_server import create_proxy_server
 async def run_streamablehttp_client(
     url: str,
     headers: dict[str, Any] | None = None,
+    auth: httpx.Auth | None = None,
     verify_ssl: bool | str | None = None,
 ) -> None:
-    """Run the SSE client.
+    """Run the StreamableHTTP client.
 
     Args:
         url: The URL to connect to.
         headers: Headers for connecting to MCP server.
+        auth: Optional authentication for the HTTP client.
         verify_ssl: Control SSL verification. Use False to disable
             or a path to a certificate bundle.
     """
@@ -28,6 +31,7 @@ async def run_streamablehttp_client(
         streamablehttp_client(
             url=url,
             headers=headers,
+            auth=auth,
             httpx_client_factory=partial(custom_httpx_client, verify_ssl=verify_ssl),
         ) as (read, write, _),
         ClientSession(read, write) as session,

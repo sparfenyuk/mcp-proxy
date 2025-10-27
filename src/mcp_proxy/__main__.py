@@ -16,6 +16,7 @@ import sys
 import typing as t
 from importlib.metadata import version
 
+from httpx_auth import OAuth2ClientCredentials
 from mcp.client.stdio import StdioServerParameters
 
 from .config_loader import load_named_server_configs_from_file
@@ -108,6 +109,21 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         choices=["sse", "streamablehttp"],
         default="sse",  # For backwards compatibility
         help="The transport to use for the client. Default is SSE.",
+    )
+    client_group.add_argument(
+        "--client-id",
+        type=str,
+        help="OAuth2 client ID for authentication",
+    )
+    client_group.add_argument(
+        "--client-secret",
+        type=str,
+        help="OAuth2 client secret for authentication",
+    )
+    client_group.add_argument(
+        "--token-url",
+        type=str,
+        help="OAuth2 token URL for authentication",
     )
     client_group.add_argument(
         "--verify-ssl",
@@ -274,17 +290,38 @@ def _handle_sse_client_mode(
     if api_access_token := os.getenv("API_ACCESS_TOKEN", None):
         headers["Authorization"] = f"Bearer {api_access_token}"
 
+    # Collect client credentials and token url if provided
+    client_id = args_parsed.client_id
+    client_secret = args_parsed.client_secret
+    token_url = args_parsed.token_url
+
+    auth = (
+        OAuth2ClientCredentials(
+            client_id=client_id,
+            client_secret=client_secret,
+            token_url=token_url,
+        )
+        if client_id and client_secret and token_url
+        else None
+    )
+
     if args_parsed.transport == "streamablehttp":
         asyncio.run(
             run_streamablehttp_client(
                 args_parsed.command_or_url,
                 headers=headers,
+                auth=auth,
                 verify_ssl=verify_ssl,
             ),
         )
     else:
         asyncio.run(
-            run_sse_client(args_parsed.command_or_url, headers=headers, verify_ssl=verify_ssl),
+            run_sse_client(
+                args_parsed.command_or_url,
+                headers=headers,
+                auth=auth,
+                verify_ssl=verify_ssl,
+            ),
         )
 
 

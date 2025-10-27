@@ -28,7 +28,7 @@ classifiers = [
 ]
 version = "0.10.0"
 requires-python = ">=3.10"
-dependencies = ["mcp>=1.17.0", "uvicorn>=0.34.0"]
+dependencies = ["httpx-auth>=0.22.0", "mcp>=1.17.0", "uvicorn>=0.34.0"]
 
 [build-system]
 requires = ["setuptools"]
