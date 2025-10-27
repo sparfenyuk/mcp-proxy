@@ -320,7 +320,7 @@ def _handle_sse_client_mode(
                 args_parsed.command_or_url,
                 headers=headers,
                 auth=auth,
-                verify_ssl=verify_ssl
+                verify_ssl=verify_ssl,
             ),
         )
 
