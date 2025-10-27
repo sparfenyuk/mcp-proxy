@@ -3,10 +3,10 @@
 from functools import partial
 from typing import Any
 
+import httpx
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.server.stdio import stdio_server
-import httpx
 
 from .httpx_client import custom_httpx_client
 from .proxy_server import create_proxy_server
@@ -16,7 +16,7 @@ async def run_sse_client(
     url: str,
     headers: dict[str, Any] | None = None,
     auth: httpx.Auth | None = None,
-    verify_ssl: bool | str | None = None
+    verify_ssl: bool | str | None = None,
 ) -> None:
     """Run the SSE client.
 

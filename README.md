@@ -335,14 +335,14 @@ SSE/StreamableHTTP client options:
                         Headers to pass to the SSE server. Can be used multiple times.
   --transport {sse,streamablehttp}
                         The transport to use for the client. Default is SSE.
+  --verify-ssl [VALUE]  Control SSL verification when acting as a client. Use without a value to force verification, pass 'false' to disable, or provide a path to a PEM bundle.
+  --no-verify-ssl       Disable SSL verification (alias for --verify-ssl false).
   --client-id CLIENT_ID 
                         OAuth2 client ID for authentication
   --client-secret CLIENT_SECRET
                         OAuth2 client secret for authentication
   --token-url TOKEN_URL 
                         OAuth2 token URL for authentication
-  --verify-ssl [VALUE]  Control SSL verification when acting as a client. Use without a value to force verification, pass 'false' to disable, or provide a path to a PEM bundle.
-  --no-verify-ssl       Disable SSL verification (alias for --verify-ssl false).
 
 stdio client options:
   args                  Any extra arguments to the command to spawn the default server. Ignored if only named servers are defined.

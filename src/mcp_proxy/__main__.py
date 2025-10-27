@@ -295,11 +295,15 @@ def _handle_sse_client_mode(
     client_secret = args_parsed.client_secret
     token_url = args_parsed.token_url
 
-    auth = OAuth2ClientCredentials(
+    auth = (
+        OAuth2ClientCredentials(
             client_id=client_id,
             client_secret=client_secret,
             token_url=token_url,
-        ) if client_id and client_secret and token_url else None
+        )
+        if client_id and client_secret and token_url
+        else None
+    )
 
     if args_parsed.transport == "streamablehttp":
         asyncio.run(
@@ -313,7 +317,10 @@ def _handle_sse_client_mode(
     else:
         asyncio.run(
             run_sse_client(
-                args_parsed.command_or_url, headers=headers, auth=auth, verify_ssl=verify_ssl
+                args_parsed.command_or_url,
+                headers=headers,
+                auth=auth,
+                verify_ssl=verify_ssl
             ),
         )
 
