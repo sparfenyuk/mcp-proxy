@@ -95,6 +95,21 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         default="sse",  # For backwards compatibility
         help="The transport to use for the client. Default is SSE.",
     )
+    client_group.add_argument(
+        "--client-id",
+        type=str,
+        help="OAuth2 client ID for authentication",
+    )
+    client_group.add_argument(
+        "--client-secret",
+        type=str,
+        help="OAuth2 client secret for authentication",
+    )
+    client_group.add_argument(
+        "--token-url",
+        type=str,
+        help="OAuth2 token URL for authentication",
+    )
 
     stdio_client_options = parser.add_argument_group("stdio client options")
     stdio_client_options.add_argument(
@@ -241,9 +256,9 @@ def _handle_sse_client_mode(
         headers["Authorization"] = f"Bearer {api_access_token}"
 
     # Collect client credentials and token url if provided
-    client_id = os.getenv("CLIENT_ID")
-    client_secret = os.getenv("CLIENT_SECRET")
-    token_url = os.getenv("TOKEN_URL")
+    client_id = args_parsed.client_id
+    client_secret = args_parsed.client_secret
+    token_url = args_parsed.token_url
 
     auth = None
     if client_id and client_secret and token_url:
