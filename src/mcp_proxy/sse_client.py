@@ -1,5 +1,6 @@
 """Create a local server that proxies requests to a remote server over SSE."""
 
+from functools import partial
 from typing import Any
 
 from mcp.client.session import ClientSession
@@ -7,19 +8,33 @@ from mcp.client.sse import sse_client
 from mcp.server.stdio import stdio_server
 import httpx
 
+from .httpx_client import custom_httpx_client
 from .proxy_server import create_proxy_server
 
 
-async def run_sse_client(url: str, headers: dict[str, Any] | None = None, auth: httpx.Auth | None = None) -> None:
+async def run_sse_client(
+    url: str,
+    headers: dict[str, Any] | None = None,
+    verify_ssl: bool | str | None = None,
+     auth: httpx.Auth | None = None
+) -> None:
     """Run the SSE client.
 
     Args:
         url: The URL to connect to.
         headers: Headers for connecting to MCP server.
-
+        verify_ssl: Control SSL verification. Use False to disable
+            or a path to a certificate bundle.
     """
-
-    async with sse_client(url=url, headers=headers, auth=auth) as streams, ClientSession(*streams) as session:
+    async with (
+        sse_client(
+            url=url,
+            headers=headers,
+            auth=auth,
+            httpx_client_factory=partial(custom_httpx_client, verify_ssl=verify_ssl),
+        ) as streams,
+        ClientSession(*streams) as session,
+    ):
         app = await create_proxy_server(session)
         async with stdio_server() as (read_stream, write_stream):
             await app.run(
