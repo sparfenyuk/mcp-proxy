@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import typing as t
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -46,7 +46,7 @@ def test_verify_ssl_cli_no_verify_alias(parser: ArgumentParser) -> None:
 
 
 @patch("mcp_proxy.httpx_client.httpx.AsyncClient")
-def test_custom_httpx_client_disable_ssl(mock_async_client: object) -> None:
+def test_custom_httpx_client_disable_ssl(mock_async_client: Mock) -> None:
     """custom_httpx_client passes verify=False to httpx when disabled."""
     custom_httpx_client(verify_ssl=False)
     kwargs = mock_async_client.call_args.kwargs
@@ -54,7 +54,7 @@ def test_custom_httpx_client_disable_ssl(mock_async_client: object) -> None:
 
 
 @patch("mcp_proxy.httpx_client.httpx.AsyncClient")
-def test_custom_httpx_client_cert_path(mock_async_client: object) -> None:
+def test_custom_httpx_client_cert_path(mock_async_client: Mock) -> None:
     """custom_httpx_client forwards certificate bundle paths."""
     custom_httpx_client(verify_ssl="/tmp/cert.pem")  # noqa: S108
     kwargs = mock_async_client.call_args.kwargs

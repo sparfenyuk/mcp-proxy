@@ -310,7 +310,7 @@ services:
 ```bash
 usage: mcp-proxy [-h] [--version] [-H KEY VALUE]
                  [--transport {sse,streamablehttp}] [--verify-ssl [VALUE]]
-                 [--no-verify-ssl] [-e KEY VALUE] [--cwd CWD]                 
+                 [--no-verify-ssl] [-e KEY VALUE] [--cwd CWD]
                  [--client-id CLIENT_ID] [--client-secret CLIENT_SECRET] [--token-url TOKEN_URL]
                  [--pass-environment | --no-pass-environment]
                  [--log-level LEVEL] [--debug | --no-debug]
@@ -337,11 +337,11 @@ SSE/StreamableHTTP client options:
                         The transport to use for the client. Default is SSE.
   --verify-ssl [VALUE]  Control SSL verification when acting as a client. Use without a value to force verification, pass 'false' to disable, or provide a path to a PEM bundle.
   --no-verify-ssl       Disable SSL verification (alias for --verify-ssl false).
-  --client-id CLIENT_ID 
+  --client-id CLIENT_ID
                         OAuth2 client ID for authentication
   --client-secret CLIENT_SECRET
                         OAuth2 client secret for authentication
-  --token-url TOKEN_URL 
+  --token-url TOKEN_URL
                         OAuth2 token URL for authentication
 
 stdio client options:
