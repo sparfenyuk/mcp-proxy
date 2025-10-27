@@ -16,14 +16,16 @@ async def run_streamablehttp_client(
     url: str,
     headers: dict[str, Any] | None = None,
     verify_ssl: bool | str | None = None,
+    auth: httpx.Auth | None = None,
 ) -> None:
-    """Run the SSE client.
+    """Run the StreamableHTTP client.
 
     Args:
         url: The URL to connect to.
         headers: Headers for connecting to MCP server.
         verify_ssl: Control SSL verification. Use False to disable
             or a path to a certificate bundle.
+        auth: Optional authentication for the HTTP client.
     """
     async with (
         streamablehttp_client(

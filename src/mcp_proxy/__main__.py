@@ -124,6 +124,8 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         "--token-url",
         type=str,
         help="OAuth2 token URL for authentication",
+    )
+    client_group.add_argument(
         "--verify-ssl",
         nargs="?",
         const=True,
@@ -293,13 +295,11 @@ def _handle_sse_client_mode(
     client_secret = args_parsed.client_secret
     token_url = args_parsed.token_url
 
-    auth = None
-    if client_id and client_secret and token_url:
-        auth = OAuth2ClientCredentials(
+    auth = OAuth2ClientCredentials(
             client_id=client_id,
             client_secret=client_secret,
             token_url=token_url,
-        )
+        ) if client_id and client_secret and token_url else None
 
     if args_parsed.transport == "streamablehttp":
         asyncio.run(
@@ -312,7 +312,9 @@ def _handle_sse_client_mode(
         )
     else:
         asyncio.run(
-            run_sse_client(args_parsed.command_or_url, headers=headers, auth=auth, verify_ssl=verify_ssl),
+            run_sse_client(
+                args_parsed.command_or_url, headers=headers, auth=auth, verify_ssl=verify_ssl
+            ),
         )
 
 
