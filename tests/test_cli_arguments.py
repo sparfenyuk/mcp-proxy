@@ -45,6 +45,27 @@ def test_verify_ssl_cli_no_verify_alias(parser: ArgumentParser) -> None:
     assert _normalize_verify_ssl(args.verify_ssl) is False
 
 
+def test_expose_header_argument(parser: ArgumentParser) -> None:
+    """--expose-header collects header names."""
+    args = parser.parse_args(["--expose-header", "Custom-Header", "uvx", "mcp-server-fetch"])
+    assert args.expose_headers == ["Custom-Header"]
+
+
+def test_expose_header_multiple(parser: ArgumentParser) -> None:
+    """Multiple --expose-header flags accumulate headers."""
+    args = parser.parse_args(
+        [
+            "--expose-header",
+            "Header-One",
+            "--expose-header",
+            "Header-Two",
+            "uvx",
+            "mcp-server-fetch",
+        ],
+    )
+    assert args.expose_headers == ["Header-One", "Header-Two"]
+
+
 @patch("mcp_proxy.httpx_client.httpx.AsyncClient")
 def test_custom_httpx_client_disable_ssl(mock_async_client: Mock) -> None:
     """custom_httpx_client passes verify=False to httpx when disabled."""

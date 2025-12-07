@@ -3,7 +3,7 @@
 import contextlib
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -25,6 +25,12 @@ from .proxy_server import create_proxy_server
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_EXPOSE_HEADERS: t.Final[tuple[str, ...]] = ("mcp-session-id",)
+
+
+def _default_expose_headers() -> list[str]:
+    return list(DEFAULT_EXPOSE_HEADERS)
+
 
 @dataclass
 class MCPServerSettings:
@@ -34,6 +40,7 @@ class MCPServerSettings:
     port: int
     stateless: bool = False
     allow_origins: list[str] | None = None
+    expose_headers: list[str] = field(default_factory=_default_expose_headers)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
 
@@ -216,6 +223,7 @@ async def run_mcp_server(
                     allow_origins=mcp_settings.allow_origins,
                     allow_methods=["*"],
                     allow_headers=["*"],
+                    expose_headers=mcp_settings.expose_headers,
                 ),
             )
 
