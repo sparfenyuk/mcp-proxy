@@ -5,7 +5,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 import uvicorn
 from mcp.client.session import ClientSession
@@ -25,7 +25,7 @@ from .proxy_server import create_proxy_server
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_EXPOSE_HEADERS: t.Final[tuple[str, ...]] = ("mcp-session-id",)
+DEFAULT_EXPOSE_HEADERS: Final[tuple[str, ...]] = ("mcp-session-id",)
 
 
 def _default_expose_headers() -> list[str]:
