@@ -1,6 +1,6 @@
 [project]
 name = "mcp-proxy"
-description = "A MCP server which proxies requests to a remote MCP server over SSE transport."
+description = "A MCP server which proxies requests to a remote MCP server over streamable HTTP or SSE."
 authors = [{ name = "Sergey Parfenyuk", email = "sergey.parfenyuk@gmail.com" }]
 license = { file = "LICENSE" }
 readme = "README.md"
