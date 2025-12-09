@@ -384,6 +384,7 @@ Examples:
   mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
   mcp-proxy -H X-Api-Key "$API_KEY" --no-verify-ssl https://example.com/mcp
   mcp-proxy --transport streamablehttp -H Authorization "Bearer $TOKEN" --remote-retries 1 https://example.com/mcp
+  mcp-proxy -H X-Api-Key "$API_KEY" -H User-Agent "mcp-proxy/cli" https://example.com/sse
   mcp-proxy --client-id CLIENT_ID --client-secret CLIENT_SECRET --token-url https://auth.example.com/token http://localhost:8080/sse
   mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2
   mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080
