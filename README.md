@@ -53,6 +53,11 @@ graph LR
 
 This mode requires providing the URL of the MCP Server's SSE endpoint as the program’s first argument. If the server uses Streamable HTTP transport, make sure to enforce it on the `mcp-proxy` side by passing `--transport=streamablehttp`.
 
+Authentication and headers:
+- Use `-H/--headers KEY VALUE` for custom headers (repeatable). Example: `-H X-Api-Key "$API_KEY" -H User-Agent "mcp-proxy"`.
+- If `API_ACCESS_TOKEN` env var is set, `mcp-proxy` automatically adds `Authorization: Bearer <token>`.
+- Disable SSL verification for dev/self-signed endpoints with `--no-verify-ssl` (alias: `--verify-ssl false`).
+
 Arguments
 
 | Name             | Required | Description                                                                                                       | Example                                       |
@@ -60,6 +65,7 @@ Arguments
 | `command_or_url` | Yes      | The MCP server SSE endpoint to connect to                                                                         | http://example.io/sse                         |
 | `--headers`      | No       | Headers to use for the MCP server SSE connection                                                                  | Authorization 'Bearer my-secret-access-token' |
 | `--transport`    | No       | Decides which transport protocol to use when connecting to an MCP server. Can be either 'sse' or 'streamablehttp' | streamablehttp                                |
+| `--retry-remote` / `--remote-retries N` | No | Retry remote MCP once (`--retry-remote`) or N times (`--remote-retries`) on transient failures | --remote-retries 2                            |
 | `--client-id`    | No       | OAuth2 client ID for authentication                                                                               | your_client_id                                |
 | `--client-secret`| No       | OAuth2 client secret for authentication                                                                           | your_client_secret                            |
 | `--token-url`    | No       | OAuth2 token endpoint URL for authentication                                                                      | https://auth.example.com/oauth/token          |
@@ -376,6 +382,7 @@ Examples:
   mcp-proxy --transport streamablehttp http://localhost:8080/mcp
   mcp-proxy --transport streamablehttp --remote-retries 2 http://localhost:8080/mcp
   mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
+  mcp-proxy -H X-Api-Key "$API_KEY" --no-verify-ssl https://example.com/mcp
   mcp-proxy --client-id CLIENT_ID --client-secret CLIENT_SECRET --token-url https://auth.example.com/token http://localhost:8080/sse
   mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2
   mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080
