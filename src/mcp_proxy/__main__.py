@@ -111,6 +111,22 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         help="The transport to use for the client. Default is SSE.",
     )
     client_group.add_argument(
+        "--retry-remote",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Retry the remote MCP server once on connection/request failure (default: off). "
+            "Useful for transient 4xx/5xx/reset issues. Use --remote-retries for a custom count."
+        ),
+    )
+    client_group.add_argument(
+        "--remote-retries",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Retry the remote MCP server N times on failure (default 0). Overrides --retry-remote count.",
+    )
+    client_group.add_argument(
         "--client-id",
         type=str,
         help="OAuth2 client ID for authentication",
@@ -305,6 +321,10 @@ def _handle_sse_client_mode(
         else None
     )
 
+    retry_attempts = max(0, args_parsed.remote_retries or 0)
+    if args_parsed.retry_remote and retry_attempts == 0:
+        retry_attempts = 1
+
     if args_parsed.transport == "streamablehttp":
         asyncio.run(
             run_streamablehttp_client(
@@ -312,6 +332,7 @@ def _handle_sse_client_mode(
                 headers=headers,
                 auth=auth,
                 verify_ssl=verify_ssl,
+                retry_attempts=retry_attempts,
             ),
         )
     else:
@@ -321,6 +342,7 @@ def _handle_sse_client_mode(
                 headers=headers,
                 auth=auth,
                 verify_ssl=verify_ssl,
+                retry_attempts=retry_attempts,
             ),
         )
 

@@ -335,6 +335,9 @@ SSE/StreamableHTTP client options:
                         Headers to pass to the SSE server. Can be used multiple times.
   --transport {sse,streamablehttp}
                         The transport to use for the client. Default is SSE.
+  --retry-remote, --no-retry-remote
+                        Retry the remote MCP server once on connection/request failure (default: off). Use --remote-retries for a custom count.
+  --remote-retries N    Retry the remote MCP server N times on failure (default 0). Overrides --retry-remote count.
   --verify-ssl [VALUE]  Control SSL verification when acting as a client. Use without a value to force verification, pass 'false' to disable, or provide a path to a PEM bundle.
   --no-verify-ssl       Disable SSL verification (alias for --verify-ssl false).
   --client-id CLIENT_ID
@@ -371,6 +374,7 @@ Examples:
   mcp-proxy http://localhost:8080/sse
   mcp-proxy --no-verify-ssl https://server.local/sse
   mcp-proxy --transport streamablehttp http://localhost:8080/mcp
+  mcp-proxy --transport streamablehttp --remote-retries 2 http://localhost:8080/mcp
   mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
   mcp-proxy --client-id CLIENT_ID --client-secret CLIENT_SECRET --token-url https://auth.example.com/token http://localhost:8080/sse
   mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2
