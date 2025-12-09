@@ -54,9 +54,9 @@ graph LR
 This mode requires providing the URL of the MCP Server's SSE endpoint as the program’s first argument. If the server uses Streamable HTTP transport, make sure to enforce it on the `mcp-proxy` side by passing `--transport=streamablehttp`.
 
 Authentication and headers:
-- Use `-H/--headers KEY VALUE` for custom headers (repeatable). Example: `-H X-Api-Key "$API_KEY" -H User-Agent "mcp-proxy"`.
+- Use `-H/--headers KEY VALUE` for custom headers (repeat once per header). Example: `-H X-Api-Key "$API_KEY" -H User-Agent "mcp-proxy"`.
 - If `API_ACCESS_TOKEN` env var is set, `mcp-proxy` automatically adds `Authorization: Bearer <token>`.
-- Disable SSL verification for dev/self-signed endpoints with `--no-verify-ssl` (alias: `--verify-ssl false`).
+- Disable SSL verification for dev/self-signed endpoints with `--no-verify-ssl` (alias: `--verify-ssl false`); avoid in production.
 
 Arguments
 
@@ -383,6 +383,7 @@ Examples:
   mcp-proxy --transport streamablehttp --remote-retries 2 http://localhost:8080/mcp
   mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
   mcp-proxy -H X-Api-Key "$API_KEY" --no-verify-ssl https://example.com/mcp
+  mcp-proxy --transport streamablehttp -H Authorization "Bearer $TOKEN" --remote-retries 1 https://example.com/mcp
   mcp-proxy --client-id CLIENT_ID --client-secret CLIENT_SECRET --token-url https://auth.example.com/token http://localhost:8080/sse
   mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2
   mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080
