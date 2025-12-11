@@ -31,8 +31,10 @@ async def dummy_stdio_server() -> AsyncIterator[tuple[Any, Any]]:
 
 @asynccontextmanager
 async def dummy_client_session(*_: Any, **__: Any) -> AsyncIterator[object]:
-    """Yield a placeholder client session."""
-    yield object()
+    """Yield a placeholder client session with mutable attributes."""
+    class _Session:
+        pass
+    yield _Session()
 
 
 def make_fail_then_success_cm():
