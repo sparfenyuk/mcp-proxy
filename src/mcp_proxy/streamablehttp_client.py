@@ -55,6 +55,18 @@ async def run_streamablehttp_client(
                         app.create_initialization_options(),
                     )
                 return
+        except httpx.HTTPStatusError as exc:
+            attempts += 1
+            if attempts >= max_attempts:
+                raise
+            logger.warning(
+                "Remote StreamableHTTP HTTP status %s; forcing re-init (%s/%s); url=%s",
+                exc.response.status_code if exc.response else "unknown",
+                attempts,
+                max_attempts - 1,
+                url,
+            )
+            await asyncio.sleep(0.5)
         except Exception as exc:  # noqa: BLE001
             attempts += 1
             if attempts >= max_attempts:
