@@ -47,6 +47,7 @@ async def run_sse_client(
                 ) as streams,
                 ClientSession(*streams) as session,
             ):
+                session._retry_attempts = retry_attempts  # type: ignore[attr-defined]
                 app = await create_proxy_server(session)
                 async with stdio_server() as (read_stream, write_stream):
                     await app.run(

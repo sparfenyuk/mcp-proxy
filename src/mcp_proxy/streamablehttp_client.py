@@ -44,9 +44,13 @@ async def run_streamablehttp_client(
                     headers=headers,
                     auth=auth,
                     httpx_client_factory=partial(custom_httpx_client, verify_ssl=verify_ssl),
+                    # align SDK reconnect attempts with our retry budget (+1 for initial)
+                    reconnect_attempts=max_attempts,
                 ) as (read, write, _),
                 ClientSession(read, write) as session,
             ):
+                # propagate retry budget to downstream handlers (used in CallTool wrapper)
+                session._retry_attempts = retry_attempts  # type: ignore[attr-defined]
                 app = await create_proxy_server(session)
                 async with stdio_server() as (read_stream, write_stream):
                     await app.run(
