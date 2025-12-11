@@ -113,6 +113,21 @@ def custom_httpx_client(  # noqa: C901
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Response Headers: %s", dict(response.headers))
 
+        # Treat certain statuses as retryable to trigger outer reconnect/re-init logic.
+        retryable_statuses = {401, 404, 410, 503}
+        if response.status_code in retryable_statuses:
+            logger.warning(
+                "Retryable HTTP status %s for %s %s; raising to trigger reconnect",
+                response.status_code,
+                response.request.method,
+                response.request.url,
+            )
+            raise httpx.HTTPStatusError(
+                f"Retryable HTTP status: {response.status_code}",
+                request=response.request,
+                response=response,
+            )
+
     # Add event hooks
     kwargs["event_hooks"] = {
         "request": [log_request],
