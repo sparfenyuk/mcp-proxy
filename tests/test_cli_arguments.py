@@ -7,8 +7,9 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from mcp_proxy.__main__ import _normalize_verify_ssl, _setup_argument_parser
+from mcp_proxy.__main__ import _create_mcp_settings, _normalize_verify_ssl, _setup_argument_parser
 from mcp_proxy.httpx_client import custom_httpx_client
+from mcp_proxy.mcp_server import DEFAULT_EXPOSE_HEADERS
 
 if t.TYPE_CHECKING:
     from argparse import ArgumentParser
@@ -64,6 +65,31 @@ def test_expose_header_multiple(parser: ArgumentParser) -> None:
         ],
     )
     assert args.expose_headers == ["Header-One", "Header-Two"]
+
+
+def test_create_mcp_settings_default_expose_headers(parser: ArgumentParser) -> None:
+    """_create_mcp_settings uses default expose headers when not provided."""
+    args = parser.parse_args(["uvx", "mcp-server-fetch", "--port", "8080"])
+    settings = _create_mcp_settings(args)
+    assert settings.expose_headers == list(DEFAULT_EXPOSE_HEADERS)
+
+
+def test_create_mcp_settings_custom_expose_headers(parser: ArgumentParser) -> None:
+    """_create_mcp_settings uses custom expose headers when provided."""
+    args = parser.parse_args(
+        [
+            "--expose-header",
+            "Custom-Header",
+            "--expose-header",
+            "Another-Header",
+            "uvx",
+            "mcp-server-fetch",
+            "--port",
+            "8080",
+        ],
+    )
+    settings = _create_mcp_settings(args)
+    assert settings.expose_headers == ["Custom-Header", "Another-Header"]
 
 
 @patch("mcp_proxy.httpx_client.httpx.AsyncClient")
