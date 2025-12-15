@@ -21,6 +21,7 @@ from mcp.server import Server
 from mcp.shared.exceptions import McpError
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import AnyUrl
+import httpx
 
 from mcp_proxy.proxy_server import create_proxy_server
 
@@ -113,6 +114,47 @@ def server_can_call_tool(
         return await tool_callback(name, arguments or {})
 
     return server_can_list_tools
+
+
+class _RetryRemoteApp:
+    """Stub remote client that fails once then succeeds, honoring retry budget."""
+
+    def __init__(self, first_error: Exception):
+        self._retry_attempts = 1  # ensure retry path exercises re-init
+        self.first_error = first_error
+        self.call_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if self.call_count == 1:
+            raise self.first_error
+        return types.CallToolResult(content=[], isError=False)
 
 
 @pytest.fixture
@@ -537,3 +579,43 @@ async def test_call_tool_with_error(
 
         call_tool_result = await session.call_tool("tool", {})
         assert call_tool_result.isError
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_http_status() -> None:
+    """Proxy should re-init and replay when call_tool raises HTTPStatusError."""
+
+    err = httpx.HTTPStatusError(
+        "status 404",
+        request=httpx.Request("POST", "http://example/mcp"),
+        response=httpx.Response(404, request=httpx.Request("POST", "http://example/mcp")),
+    )
+    remote = _RetryRemoteApp(first_error=err)
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        # proxy returns EmptyResult on success path
+        assert not res.isError
+        assert res.content == []
+
+    # initialize called once at startup and once during retry
+    assert remote.init_count == 2
+    assert remote.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_session_not_found() -> None:
+    """Proxy should re-init and replay when server returns session-not-found error payload."""
+
+    remote = _RetryRemoteApp(first_error=Exception("Session not found (-32001)"))
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    # initialize called once at startup and once during retry
+    assert remote.init_count == 2
+    assert remote.call_count == 2
