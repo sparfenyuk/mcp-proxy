@@ -321,9 +321,9 @@ def _handle_sse_client_mode(
         else None
     )
 
-    retry_attempts = max(0, args_parsed.remote_retries or 0)
-    if args_parsed.retry_remote and retry_attempts == 0:
-        retry_attempts = 1
+    # Ensure at least one retry so transient/session errors trigger a re-init by default
+    retry_attempts = args_parsed.remote_retries or 0
+    retry_attempts = max(1, retry_attempts)
 
     if args_parsed.transport == "streamablehttp":
         asyncio.run(

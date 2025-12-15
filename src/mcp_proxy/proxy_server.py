@@ -6,6 +6,8 @@ This server is created independent of any transport mechanism.
 import logging
 import typing as t
 
+import httpx
+
 from mcp import server, types
 from mcp.client.session import ClientSession
 
@@ -95,6 +97,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
             attempts = 0
             max_attempts = getattr(remote_app, "_retry_attempts", 0)
             max_attempts = 1 + max(0, max_attempts)
+
+            def _is_session_not_found(err: Exception) -> bool:
+                text = str(err)
+                return "Session not found" in text or "-32001" in text
+
             try:
                 while attempts < max_attempts:
                     try:
@@ -117,6 +124,19 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                         )
                         await remote_app.initialize()
                         continue
+                    except Exception as exc:  # noqa: BLE001
+                        # Handle JSON-RPC session errors that come back as 200 with an error payload
+                        if _is_session_not_found(exc) and attempts + 1 < max_attempts:
+                            attempts += 1
+                            logger.warning(
+                                "CallTool %s got session error; re-initializing session (%s/%s)",
+                                req.params.name,
+                                attempts,
+                                max_attempts - 1,
+                            )
+                            await remote_app.initialize()
+                            continue
+                        raise
             except Exception as e:  # noqa: BLE001
                 return types.ServerResult(
                     types.CallToolResult(
