@@ -85,6 +85,53 @@ async def test_streamable_reinit_on_http_status(monkeypatch: pytest.MonkeyPatch)
 
 
 @pytest.mark.asyncio
+async def test_streamable_omits_reconnect_attempts_when_not_supported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """StreamableHTTP client should not pass reconnect_attempts if SDK doesn't support it."""
+
+    @asynccontextmanager
+    async def _no_reconnect_arg_cm(
+        url: str,
+        headers: dict[str, Any] | None = None,
+        auth: Any | None = None,
+        httpx_client_factory: Any | None = None,
+    ) -> AsyncIterator[tuple[Any, Any, Any]]:
+        _ = (url, headers, auth, httpx_client_factory)
+        yield ("r", "w", None)
+
+    monkeypatch.setattr(
+        "mcp_proxy.streamablehttp_client.streamablehttp_client",
+        _no_reconnect_arg_cm,
+    )
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.stdio_server", dummy_stdio_server)
+
+    async def _create_proxy(_s: Any) -> DummyApp:
+        return DummyApp()
+
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.create_proxy_server", _create_proxy)
+
+    @asynccontextmanager
+    async def _client_session(*_: Any) -> AsyncIterator[Any]:
+        yield DummyApp()
+
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.ClientSession", _client_session)
+
+    async def _sleep(_: float) -> None:  # noqa: D401
+        return None
+
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.asyncio.sleep", _sleep)
+
+    await run_streamablehttp_client(
+        url="http://example/mcp",
+        headers=None,
+        auth=None,
+        verify_ssl=None,
+        retry_attempts=1,
+    )
+
+
+@pytest.mark.asyncio
 async def test_streamable_respects_retry_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     """StreamableHTTP stops after exceeding retry budget."""
     monkeypatch.setattr(

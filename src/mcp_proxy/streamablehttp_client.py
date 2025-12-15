@@ -1,6 +1,7 @@
 """Create a local server that proxies requests to a remote server over SSE."""
 
 import asyncio
+import inspect
 import logging
 from functools import partial
 from typing import Any
@@ -38,14 +39,28 @@ async def run_streamablehttp_client(
 
     while attempts < max_attempts:
         try:
+            stream_kwargs: dict[str, Any] = {
+                "url": url,
+                "headers": headers,
+                "auth": auth,
+                "httpx_client_factory": partial(custom_httpx_client, verify_ssl=verify_ssl),
+            }
+
+            # Newer MCP Python SDKs accept reconnect_attempts; older ones don't.
+            # Keep compatibility across versions by only passing supported kwargs.
+            try:
+                params = inspect.signature(streamablehttp_client).parameters
+                supports_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
+                if "reconnect_attempts" in params or supports_kwargs:
+                    # align SDK reconnect attempts with our retry budget (+1 for initial)
+                    stream_kwargs["reconnect_attempts"] = max_attempts
+            except (TypeError, ValueError):
+                # If the callable is not introspectable, don't pass optional kwargs.
+                pass
+
             async with (
                 streamablehttp_client(
-                    url=url,
-                    headers=headers,
-                    auth=auth,
-                    httpx_client_factory=partial(custom_httpx_client, verify_ssl=verify_ssl),
-                    # align SDK reconnect attempts with our retry budget (+1 for initial)
-                    reconnect_attempts=max_attempts,
+                    **stream_kwargs,
                 ) as (read, write, _),
                 ClientSession(read, write) as session,
             ):
