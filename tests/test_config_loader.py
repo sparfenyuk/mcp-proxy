@@ -57,7 +57,7 @@ def test_load_valid_config(create_temp_config_file: Callable[[dict[str, t.Any]],
     base_env = {"PASSED": "env_value"}
     base_env_with_added_env = {"PASSED": "env_value", "FOO": "bar"}
 
-    loaded_params = load_named_server_configs_from_file(tmp_config_path, base_env)
+    loaded_params, header_mappings = load_named_server_configs_from_file(tmp_config_path, base_env)
 
     assert "server1" in loaded_params
     assert loaded_params["server1"].command == "echo"
@@ -85,7 +85,7 @@ def test_load_config_with_not_enabled_server(
         },
     }
     tmp_config_path = create_temp_config_file(config_content)
-    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+    loaded_params, header_mappings = load_named_server_configs_from_file(tmp_config_path, {})
 
     assert "explicitly_enabled_server" in loaded_params
     assert loaded_params["explicitly_enabled_server"].command == "true_command"
@@ -135,7 +135,7 @@ def test_load_example_fetch_config_if_uvx_exists() -> None:
         )
 
     base_env = {"EXAMPLE_ENV": "true"}
-    loaded_params = load_named_server_configs_from_file(example_config_path, base_env)
+    loaded_params, header_mappings = load_named_server_configs_from_file(example_config_path, base_env)
 
     assert "fetch" in loaded_params
     fetch_param = loaded_params["fetch"]
@@ -167,7 +167,7 @@ def test_invalid_server_entry_not_dict(
     config_content = {"mcpServers": {"server1": "not_a_dict"}}
     tmp_config_path = create_temp_config_file(config_content)
 
-    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+    loaded_params, header_mappings = load_named_server_configs_from_file(tmp_config_path, {})
     assert len(loaded_params) == 0  # No servers should be loaded
     mock_logger.warning.assert_called_with(
         "Skipping invalid server config for '%s' in %s. Entry is not a dictionary.",
@@ -184,7 +184,7 @@ def test_server_entry_missing_command(
     """Test handling of server entries missing the command field."""
     config_content = {"mcpServers": {"server_no_command": {"args": ["arg1"]}}}
     tmp_config_path = create_temp_config_file(config_content)
-    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+    loaded_params, header_mappings = load_named_server_configs_from_file(tmp_config_path, {})
     assert "server_no_command" not in loaded_params
     mock_logger.warning.assert_called_with(
         "Named server '%s' from config is missing 'command'. Skipping.",
@@ -204,7 +204,7 @@ def test_server_entry_invalid_args_type(
         },
     }
     tmp_config_path = create_temp_config_file(config_content)
-    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+    loaded_params, header_mappings = load_named_server_configs_from_file(tmp_config_path, {})
     assert "server_invalid_args" not in loaded_params
     mock_logger.warning.assert_called_with(
         "Named server '%s' from config has invalid 'args' (must be a list). Skipping.",
@@ -216,7 +216,7 @@ def test_empty_mcpservers_dict(create_temp_config_file: Callable[[dict[str, t.An
     """Test handling of configuration files with empty mcpServers dictionary."""
     config_content: dict[str, t.Any] = {"mcpServers": {}}
     tmp_config_path = create_temp_config_file(config_content)
-    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+    loaded_params, header_mappings = load_named_server_configs_from_file(tmp_config_path, {})
     assert len(loaded_params) == 0
 
 

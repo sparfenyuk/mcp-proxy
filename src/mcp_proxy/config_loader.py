@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 def load_named_server_configs_from_file(
     config_file_path: str | Path,
     base_env: dict[str, str],
-) -> dict[str, StdioServerParameters]:
+) -> tuple[dict[str, StdioServerParameters], dict[str, dict[str, str]]]:
     """Loads named server configurations from a JSON file.
 
     Args:
@@ -23,7 +23,9 @@ def load_named_server_configs_from_file(
         base_env: The base environment dictionary to be inherited by servers.
 
     Returns:
-        A dictionary of named server parameters.
+        A tuple containing:
+        - A dictionary of named server parameters
+        - A dictionary of header-to-environment mappings for each server
 
     Raises:
         FileNotFoundError: If the config file is not found.
@@ -31,6 +33,7 @@ def load_named_server_configs_from_file(
         ValueError: If the config file format is invalid.
     """
     named_stdio_params: dict[str, StdioServerParameters] = {}
+    header_mappings: dict[str, dict[str, str]] = {}
     logger.info("Loading named server configurations from: %s", config_file_path)
 
     try:
@@ -70,6 +73,7 @@ def load_named_server_configs_from_file(
         command = server_config.get("command")
         command_args = server_config.get("args", [])
         env = server_config.get("env", {})
+        header_to_env = server_config.get("headerToEnv", {})
 
         if not command:
             logger.warning(
@@ -83,6 +87,12 @@ def load_named_server_configs_from_file(
                 name,
             )
             continue
+        if not isinstance(header_to_env, dict):
+            logger.warning(
+                "Named server '%s' from config has invalid 'headerToEnv' (must be a dict). Skipping.",
+                name,
+            )
+            continue
 
         new_env = base_env.copy()
         new_env.update(env)
@@ -93,11 +103,16 @@ def load_named_server_configs_from_file(
             env=new_env,
             cwd=None,
         )
+        
+        # Store header mapping for this server
+        header_mappings[name] = header_to_env
+        
         logger.info(
-            "Configured named server '%s' from config: %s %s",
+            "Configured named server '%s' from config: %s %s (header mappings: %s)",
             name,
             command,
             " ".join(command_args),
+            list(header_to_env.keys()) if header_to_env else "none",
         )
 
-    return named_stdio_params
+    return named_stdio_params, header_mappings

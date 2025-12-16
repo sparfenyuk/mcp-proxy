@@ -81,9 +81,7 @@ For Claude Desktop, the configuration entry can look like this:
   "mcpServers": {
     "mcp-proxy": {
       "command": "mcp-proxy",
-      "args": [
-        "http://example.io/sse"
-      ],
+      "args": ["http://example.io/sse"],
       "env": {
         "API_ACCESS_TOKEN": "access-token"
       }
@@ -185,22 +183,20 @@ The JSON file should follow this structure:
       "disabled": false,
       "timeout": 60,
       "command": "uvx",
-      "args": [
-        "mcp-server-fetch"
-      ],
+      "args": ["mcp-server-fetch"],
       "transportType": "stdio"
     },
     "github": {
       "timeout": 60,
       "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-github"
-      ],
+      "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_TOKEN>"
       },
-      "transportType": "stdio"
+      "transportType": "stdio",
+      "headerToEnv": {
+        "Authorization": "GITHUB_PERSONAL_ACCESS_TOKEN"
+      }
     }
   }
 }
@@ -210,7 +206,72 @@ The JSON file should follow this structure:
 - `command`: (Required) The command to execute for the stdio server.
 - `args`: (Optional) A list of arguments for the command. Defaults to an empty list.
 - `enabled`: (Optional) If `false`, this server definition will be skipped. Defaults to `true`.
+- `env`: (Optional) Static environment variables to pass to the stdio server.
+- `headerToEnv`: (Optional) Dynamic mapping of HTTP headers to environment variables. When a request comes in with the specified header, its value will be passed as an environment variable to the stdio server.
 - `timeout` and `transportType`: These fields are present in standard MCP client configurations but are currently **ignored** by `mcp-proxy` when loading named servers. The transport type is implicitly "stdio".
+
+## Dynamic Token Support
+
+`mcp-proxy` supports dynamic token extraction from HTTP headers. This allows you to pass authentication tokens with each request instead of hardcoding them in the configuration.
+
+### How it works
+
+1. **Configure header mapping**: In your server configuration, add a `headerToEnv` section that maps HTTP header names to environment variable names.
+2. **Send requests with headers**: When making requests to your MCP servers, include the required headers with your tokens.
+3. **Automatic token extraction**: `mcp-proxy` automatically extracts the tokens from headers and passes them as environment variables to the stdio processes.
+
+### Example Usage
+
+**Configuration:**
+
+```json
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "headerToEnv": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "GITHUB_PERSONAL_ACCESS_TOKEN"
+      }
+    }
+  }
+}
+```
+
+**HTTP Request:**
+
+```http
+GET /servers/github/sse HTTP/1.1
+Host: localhost:8080
+GITHUB_PERSONAL_ACCESS_TOKEN: ghp_1234567890abcdef
+```
+
+**Result:** The GitHub MCP server will receive `GITHUB_PERSONAL_ACCESS_TOKEN=ghp_1234567890abcdef` as an environment variable.
+
+### Multiple Tokens
+
+You can configure multiple header mappings for a single server:
+
+```json
+{
+  "mcpServers": {
+    "bitrix": {
+      "command": "python3",
+      "args": ["mcp-bitrix/mcp_server.py"],
+      "headerToEnv": {
+        "Authorization": "BITRIX_WEBHOOK_URL",
+        "X-Bitrix-Signature": "BITRIX_ACCESS_TOKEN"
+      }
+    }
+  }
+}
+```
+
+### Security Considerations
+
+- **Token validation**: Consider implementing token validation in your MCP servers.
+- **HTTPS only**: Always use HTTPS in production to protect tokens in transit.
+- **Token rotation**: Implement token rotation mechanisms for enhanced security.
 
 ## Installation
 
@@ -256,6 +317,7 @@ docker run --rm -t ghcr.io/sparfenyuk/mcp-proxy:v0.3.2-alpine --help
 
   **Solution**: Try to use the full path to the binary. To do so, open a terminal and run the command`which mcp-proxy` (
   macOS, Linux) or `where.exe mcp-proxy` (Windows). Then, use the output path as a value for 'command' attribute:
+
   ```json
     "fetch": {
       "command": "/full/path/to/bin/mcp-proxy",
@@ -388,18 +450,13 @@ Examples:
       "enabled": true,
       "timeout": 60,
       "command": "uvx",
-      "args": [
-        "mcp-server-fetch"
-      ],
+      "args": ["mcp-server-fetch"],
       "transportType": "stdio"
     },
     "github": {
       "timeout": 60,
       "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-github"
-      ],
+      "args": ["-y", "@modelcontextprotocol/server-github"],
       "env": {
         "GITHUB_PERSONAL_ACCESS_TOKEN": "<YOUR_TOKEN>"
       },

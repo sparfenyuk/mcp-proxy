@@ -10,14 +10,45 @@
       "transportType": "stdio"
     },
     "github": {
+      "enabled": true,
+      "timeout": 60,
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github",
+        "--toolsets",
+        "repos,issues,context,projects,gists"
+      ],
+      "transportType": "stdio",
+      "headerToEnv": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "GITHUB_PERSONAL_ACCESS_TOKEN"
+      }
+    },
+    "bitrix24": {
+      "enabled": false,
+      "timeout": 60,
+      "command": "python3",
+      "args": [
+        "mcp-bitrix/mcp_server.py"
+      ],
+      "transportType": "stdio",
+      "headerToEnv": {
+        "BITRIX_WEBHOOK_URL": "BITRIX_WEBHOOK_URL",
+        "BITRIX_ACCESS_TOKEN": "BITRIX_ACCESS_TOKEN"
+      }
+    },
+    "context7": {
       "enabled": false,
       "timeout": 60,
       "command": "npx",
       "args": [
         "-y",
-        "@modelcontextprotocol/server-github"
+        "@upstash/context7-mcp"
       ],
-      "transportType": "stdio"
+      "transportType": "stdio",
+      "headerToEnv": {
+        "CONTEXT7_API_KEY": "CONTEXT7_API_KEY"
+      }
     }
   }
 }
