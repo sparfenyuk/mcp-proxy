@@ -127,6 +127,7 @@ Arguments
 | `--cwd`                              | No                         | The working directory to pass to the MCP stdio server process.                                | /tmp                                        |
 | `--pass-environment`                 | No                         | Pass through all environment variables when spawning the server                               | --no-pass-environment                       |
 | `--allow-origin`                     | No                         | Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.   | --allow-origin "\*"                         |
+| `--expose-header`                    | No                         | Headers added to `Access-Control-Expose-Headers`. Can be used multiple times. Defaults to `Mcp-Session-Id`. | --expose-header Custom-Header              |
 | `--stateless`                        | No                         | Enable stateless mode for streamable http transports. Default is False                        | --no-stateless                              |
 | `--named-server NAME COMMAND_STRING` | No                         | Defines a named stdio server.                                                                 | --named-server fetch 'uvx mcp-server-fetch' |
 | `--named-server-config FILE_PATH`    | No                         | Path to a JSON file defining named stdio servers.                                             | --named-server-config /path/to/servers.json |
@@ -159,6 +160,9 @@ mcp-proxy --port=8080 --named-server fetch 'uvx mcp-server-fetch' --named-server
 
 # Start multiple named MCP servers using a configuration file
 mcp-proxy --port=8080 --named-server-config ./servers.json
+
+# Start the MCP server with CORS enabled and custom exposed headers
+mcp-proxy --port=8080 --allow-origin='*' --expose-header Custom-Header uvx mcp-server-fetch
 ```
 
 ## Named Servers
@@ -319,6 +323,7 @@ usage: mcp-proxy [-h] [--version] [-H KEY VALUE]
                  [--stateless | --no-stateless] [--sse-port SSE_PORT]
                  [--sse-host SSE_HOST]
                  [--allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]]
+                 [--expose-header HEADER]
                  [command_or_url] [args ...]
 
 Start the MCP proxy in one of two possible modes: as a client or a server.
@@ -366,6 +371,8 @@ SSE server options:
   --sse-host SSE_HOST   (deprecated) Same as --host
   --allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]
                         Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.
+  --expose-header HEADER
+                        Headers to expose via Access-Control-Expose-Headers. Defaults to 'Mcp-Session-Id'. Can be used multiple times.
 
 Examples:
   mcp-proxy http://localhost:8080/sse
@@ -377,6 +384,7 @@ Examples:
   mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080
   mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE
   mcp-proxy your-command --port 8080 --allow-origin='*'
+  mcp-proxy your-command --port 8080 --allow-origin='*' --expose-header Custom-Header
 ```
 
 ### Example config file

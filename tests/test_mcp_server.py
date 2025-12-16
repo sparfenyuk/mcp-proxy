@@ -19,7 +19,12 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 
-from mcp_proxy.mcp_server import MCPServerSettings, create_single_instance_routes, run_mcp_server
+from mcp_proxy.mcp_server import (
+    DEFAULT_EXPOSE_HEADERS,
+    MCPServerSettings,
+    create_single_instance_routes,
+    run_mcp_server,
+)
 
 
 def create_starlette_app(
@@ -405,6 +410,51 @@ async def test_run_mcp_server_with_cors_middleware(
 
         assert len(middleware) == 1
         assert middleware[0].cls == CORSMiddleware
+        assert middleware[0].kwargs["expose_headers"] == list(DEFAULT_EXPOSE_HEADERS)
+
+
+async def test_run_mcp_server_custom_expose_headers(
+    mock_stdio_params: StdioServerParameters,
+) -> None:
+    """Test run_mcp_server honors custom expose headers."""
+    settings_with_custom_headers = MCPServerSettings(
+        bind_host="0.0.0.0",  # noqa: S104
+        port=9090,
+        allow_origins=["http://localhost"],
+        expose_headers=["Header-One", "Header-Two"],
+    )
+
+    with (
+        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("mcp_proxy.mcp_server.Starlette") as mock_starlette,
+        patch("uvicorn.Server") as mock_uvicorn_server,
+    ):
+        (
+            mock_stdio_context,
+            mock_session_context,
+            mock_session,
+            mock_http_manager,
+            mock_routes,
+        ) = setup_async_context_mocks()
+        mock_stdio_client.return_value = mock_stdio_context
+        mock_client_session.return_value = mock_session_context
+
+        mock_proxy = AsyncMock()
+        mock_create_proxy.return_value = mock_proxy
+        mock_create_routes.return_value = (mock_routes, mock_http_manager)
+
+        mock_server_instance = AsyncMock()
+        mock_uvicorn_server.return_value = mock_server_instance
+
+        await run_mcp_server(settings_with_custom_headers, mock_stdio_params, {})
+
+        middleware = mock_starlette.call_args.kwargs["middleware"]
+
+        assert len(middleware) == 1
+        assert middleware[0].kwargs["expose_headers"] == ["Header-One", "Header-Two"]
 
 
 async def test_run_mcp_server_debug_mode(
