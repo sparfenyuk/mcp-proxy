@@ -93,10 +93,14 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         app.request_handlers[types.ListToolsRequest] = _list_tools
 
         async def _call_tool(req: types.CallToolRequest) -> types.ServerResult:
-            retryable_statuses = {401, 404, 410, 503, 500}
             attempts = 0
             max_attempts = getattr(remote_app, "_retry_attempts", 0)
             max_attempts = 1 + max(0, max_attempts)
+
+            def _is_retryable_status(status: int | None) -> bool:
+                if status is None:
+                    return False
+                return 400 <= status < 500 or status == 503
 
             def _is_session_not_found(err: Exception) -> bool:
                 text = str(err)
@@ -113,7 +117,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     except httpx.HTTPStatusError as exc:
                         attempts += 1
                         status = exc.response.status_code if exc.response else None
-                        if status not in retryable_statuses or attempts >= max_attempts:
+                        if not _is_retryable_status(status) or attempts >= max_attempts:
                             raise
                         logger.warning(
                             "CallTool %s got HTTP %s; re-initializing session (%s/%s)",
