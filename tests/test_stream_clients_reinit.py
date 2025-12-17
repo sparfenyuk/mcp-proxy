@@ -96,7 +96,9 @@ async def test_streamable_omits_reconnect_attempts_when_not_supported(
         headers: dict[str, Any] | None = None,
         auth: Any | None = None,
         httpx_client_factory: Any | None = None,
+        terminate_on_close: bool = True,
     ) -> AsyncIterator[tuple[Any, Any, Any]]:
+        assert terminate_on_close is False
         _ = (url, headers, auth, httpx_client_factory)
         yield ("r", "w", None)
 

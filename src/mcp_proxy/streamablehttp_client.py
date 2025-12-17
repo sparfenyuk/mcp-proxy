@@ -44,6 +44,11 @@ async def run_streamablehttp_client(
                 "headers": headers,
                 "auth": auth,
                 "httpx_client_factory": partial(custom_httpx_client, verify_ssl=verify_ssl),
+                # Don't terminate the whole proxy if the server->client GET stream drops.
+                # QuickMemory (and some other servers) can intermittently fail the GET stream
+                # while still accepting request/response POSTs. Exiting here causes Codex to see
+                # `tools/call failed: Transport closed`.
+                "terminate_on_close": False,
             }
 
             # Newer MCP Python SDKs accept reconnect_attempts; older ones don't.
