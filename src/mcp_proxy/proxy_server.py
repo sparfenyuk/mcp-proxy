@@ -10,8 +10,28 @@ import httpx
 
 from mcp import server, types
 from mcp.client.session import ClientSession
+from mcp.shared.exceptions import McpError
 
 logger = logging.getLogger(__name__)
+
+
+def _iter_exceptions(exc: BaseException) -> t.Iterator[BaseException]:
+    """Yield all nested exceptions (including ExceptionGroup leaves)."""
+    if isinstance(exc, BaseExceptionGroup):
+        for inner in exc.exceptions:
+            yield from _iter_exceptions(inner)
+        return
+
+    yield exc
+
+    # Walk common chaining mechanisms. Avoid infinite recursion via self-references.
+    cause = getattr(exc, "__cause__", None)
+    if isinstance(cause, BaseException) and cause is not exc:
+        yield from _iter_exceptions(cause)
+
+    context = getattr(exc, "__context__", None)
+    if isinstance(context, BaseException) and context is not exc and context is not cause:
+        yield from _iter_exceptions(context)
 
 
 async def create_proxy_server(remote_app: ClientSession) -> server.Server[object]:  # noqa: C901, PLR0915
@@ -102,9 +122,22 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     return False
                 return 400 <= status < 500 or status == 503
 
-            def _is_session_not_found(err: Exception) -> bool:
-                text = str(err)
-                return "Session not found" in text or "-32001" in text
+            def _session_not_found_in_error(err: BaseException) -> bool:
+                for leaf in _iter_exceptions(err):
+                    if isinstance(leaf, McpError) and getattr(leaf.error, "code", None) == -32001:
+                        return True
+                    text = str(leaf)
+                    if "Session not found" in text or "-32001" in text:
+                        return True
+                return False
+
+            def _retryable_status_in_error(err: BaseException) -> int | None:
+                for leaf in _iter_exceptions(err):
+                    if isinstance(leaf, httpx.HTTPStatusError):
+                        status = leaf.response.status_code if leaf.response else None
+                        if _is_retryable_status(status):
+                            return status
+                return None
 
             try:
                 while attempts < max_attempts:
@@ -129,8 +162,21 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                         await remote_app.initialize()
                         continue
                     except Exception as exc:  # noqa: BLE001
+                        status = _retryable_status_in_error(exc)
+                        if status is not None and attempts + 1 < max_attempts:
+                            attempts += 1
+                            logger.warning(
+                                "CallTool %s got HTTP %s (wrapped); re-initializing session (%s/%s)",
+                                req.params.name,
+                                status,
+                                attempts,
+                                max_attempts - 1,
+                            )
+                            await remote_app.initialize()
+                            continue
+
                         # Handle JSON-RPC session errors that come back as 200 with an error payload
-                        if _is_session_not_found(exc) and attempts + 1 < max_attempts:
+                        if _session_not_found_in_error(exc) and attempts + 1 < max_attempts:
                             attempts += 1
                             logger.warning(
                                 "CallTool %s got session error; re-initializing session (%s/%s)",
