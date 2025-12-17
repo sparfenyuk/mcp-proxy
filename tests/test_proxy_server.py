@@ -679,6 +679,24 @@ async def test_proxy_call_tool_retries_on_session_not_found_mcp_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_session_terminated_mcp_error() -> None:
+    """Proxy should re-init and replay when server returns McpError 'Session terminated'."""
+
+    remote = _RetryRemoteApp(
+        first_error=McpError(types.ErrorData(code=32600, message="Session terminated")),
+    )
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    assert remote.init_count == 2
+    assert remote.call_count == 2
+
+
+@pytest.mark.asyncio
 async def test_proxy_call_tool_retries_on_session_not_found_exception_group() -> None:
     """Proxy should re-init and replay when session-not-found is wrapped."""
 

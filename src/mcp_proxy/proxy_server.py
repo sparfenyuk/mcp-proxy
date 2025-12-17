@@ -124,10 +124,20 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
             def _session_not_found_in_error(err: BaseException) -> bool:
                 for leaf in _iter_exceptions(err):
-                    if isinstance(leaf, McpError) and getattr(leaf.error, "code", None) == -32001:
-                        return True
+                    if isinstance(leaf, McpError):
+                        code = getattr(leaf.error, "code", None)
+                        msg = getattr(leaf.error, "message", "") or ""
+                        # -32001: common upstream "Session not found"
+                        if code == -32001:
+                            return True
+                        # 32600: JSON-RPC Invalid Request; observed from some servers as "Session terminated"
+                        # Treat this as a terminal session signal and re-initialize.
+                        if code == 32600 and "Session terminated" in msg:
+                            return True
                     text = str(leaf)
                     if "Session not found" in text or "-32001" in text:
+                        return True
+                    if "Session terminated" in text:
                         return True
                 return False
 
