@@ -149,6 +149,19 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                             return status
                 return None
 
+            def _is_session_error_result(result: types.CallToolResult) -> bool:
+                if not result.isError:
+                    return False
+                for item in result.content or []:
+                    if getattr(item, "type", None) != "text":
+                        continue
+                    text = getattr(item, "text", "") or ""
+                    if "Session not found" in text or "-32001" in text:
+                        return True
+                    if "Session terminated" in text:
+                        return True
+                return False
+
             try:
                 while attempts < max_attempts:
                     try:
@@ -156,6 +169,16 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                             req.params.name,
                             (req.params.arguments or {}),
                         )
+                        if _is_session_error_result(result) and attempts + 1 < max_attempts:
+                            attempts += 1
+                            logger.warning(
+                                "CallTool %s got session error result; re-initializing session (%s/%s)",
+                                req.params.name,
+                                attempts,
+                                max_attempts - 1,
+                            )
+                            await remote_app.initialize()
+                            continue
                         return types.ServerResult(result)
                     except httpx.HTTPStatusError as exc:
                         attempts += 1

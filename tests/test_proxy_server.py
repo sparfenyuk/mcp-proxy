@@ -196,6 +196,47 @@ class _AlwaysFailRemoteApp:
         raise self.error
 
 
+class _ResultThenSuccessRemoteApp:
+    """Stub remote client that returns an error result once, then succeeds."""
+
+    def __init__(self, first_result: types.CallToolResult, *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self.first_result = first_result
+        self.call_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if self.call_count == 1:
+            return self.first_result
+        return types.CallToolResult(content=[], isError=False)
+
+
 @pytest.fixture
 def server_can_list_resources(server: Server[object], resource: types.Resource) -> Server[object]:
     """Return a server instance with resources."""
@@ -773,3 +814,47 @@ async def test_proxy_call_tool_honors_retry_budget_when_all_attempts_fail() -> N
     assert remote.call_count == 3
     # initialize once at startup + once per retry (2) => 3
     assert remote.init_count == 3
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_session_terminated_error_result() -> None:
+    """Proxy should re-init and replay when remote returns an error result indicating session termination."""
+
+    remote = _ResultThenSuccessRemoteApp(
+        types.CallToolResult(
+            content=[types.TextContent(type="text", text="Mcp error: 32600: Session terminated")],
+            isError=True,
+        ),
+        retry_attempts=1,
+    )
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    assert remote.call_count == 2
+    assert remote.init_count == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_session_not_found_error_result() -> None:
+    """Proxy should re-init and replay when remote returns an error result indicating session loss."""
+
+    remote = _ResultThenSuccessRemoteApp(
+        types.CallToolResult(
+            content=[types.TextContent(type="text", text="Session not found (-32001)")],
+            isError=True,
+        ),
+        retry_attempts=1,
+    )
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    assert remote.call_count == 2
+    assert remote.init_count == 2
