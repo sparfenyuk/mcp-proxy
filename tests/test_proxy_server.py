@@ -237,6 +237,57 @@ class _ResultThenSuccessRemoteApp:
         return types.CallToolResult(content=[], isError=False)
 
 
+class _RetryRemoteResourcesApp:
+    """Stub remote client exposing resources, failing once then succeeding."""
+
+    def __init__(self, first_error: Exception, *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self.first_error = first_error
+        self.read_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=None,
+                logging=None,
+                prompts=None,
+                resources=types.ResourcesCapability(listChanged=True),
+            ),
+            instructions=None,
+        )
+
+    async def list_resources(self):
+        return types.ListResourcesResult(resources=[])
+
+    async def list_resource_templates(self):
+        return types.ListResourceTemplatesResult(resourceTemplates=[])
+
+    async def read_resource(self, uri: str):
+        self.read_count += 1
+        if self.read_count == 1:
+            raise self.first_error
+        return types.ReadResourceResult(contents=[])
+
+
+@pytest.mark.asyncio
+async def test_proxy_read_resource_retries_on_timeout() -> None:
+    """Proxy should retry/re-init non-tool handlers on timeout/network errors."""
+
+    remote = _RetryRemoteResourcesApp(first_error=httpx.ReadTimeout("rt"), retry_attempts=1)
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.read_resource("resource://x")
+        assert res.contents == []
+
+    # initialize called once at startup and once during retry
+    assert remote.init_count == 2
+    assert remote.read_count == 2
+
 @pytest.fixture
 def server_can_list_resources(server: Server[object], resource: types.Resource) -> Server[object]:
     """Return a server instance with resources."""
