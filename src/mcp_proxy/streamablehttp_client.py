@@ -158,9 +158,22 @@ async def run_streamablehttp_client(
                         return
                     raise
                 return
-        except asyncio.CancelledError:
-            # Cooperative shutdown (Codex timing out / cancelling tool call).
-            raise
+        except asyncio.CancelledError as exc:
+            # Some cancellations occur while stdio is still alive (e.g., sibling task cancels
+            # a connect attempt). If stdio is open, treat this as retryable.
+            if _stdin_is_closed():
+                raise
+            attempts += 1
+            if attempts >= max_attempts:
+                raise
+            logger.warning(
+                "StreamableHTTP cancelled while stdio open; retrying (%s/%s); error=%s",
+                attempts,
+                max_attempts - 1,
+                exc,
+            )
+            await asyncio.sleep(0.5)
+            continue
         except httpx.HTTPStatusError as exc:
             attempts += 1
             if attempts >= max_attempts:
