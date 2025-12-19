@@ -11,11 +11,11 @@ Purpose: capture the work needed so future agents can make mcp-proxy recover and
 - If recovery fails, emit actionable messages (include URL, status code, hint about `/mcp/` path, and “backend unavailable” guidance) instead of opaque “Session terminated.”
 
 ## Plan (iteration outline)
-- [ ] Add **opt-in** auto-retry for remote StreamableHTTP/SSE init and request failures (single quick retry with backoff) behind `--retry-remote` (default: off) and configurable attempts via `--remote-retries N`.
+- [x] Add **opt-in** auto-retry for remote StreamableHTTP/SSE init and request failures (single quick retry with backoff) behind `--retry-remote` (default: off) and configurable attempts via `--remote-retries N`.
 - [ ] Normalize and log the exact upstream URL used (including trailing slash handling) so 404s point to a real path mismatch.
-- [ ] When upstream returns non-200/202 or the session dies (`32600 Session terminated`), attempt one re-init; if that fails, return a richer error to the client.
+- [x] When upstream returns non-200/202 or the session dies (`32600 Session terminated`), attempt one re-init; if that fails, return a richer error to the client.
 - [ ] Improve logging/messages surfaced to clients: include status code, upstream URL, and suggestion to check backend health/path/auth.
-- [ ] Tests: add unit/integration coverage for (a) 404 on first call then success on retry, (b) connection reset, (c) ensure no infinite retry loops.
+- [x] Tests: added coverage for retryable 404s, send-path errors, call timeouts, and retry-budget guard. Connection-reset coverage still TODO.
 
 ## Open decisions
 - (Decided) Surface guidance in logs only; keep MCP error payload minimal/standard to avoid leaks and client incompatibility.
