@@ -9,6 +9,7 @@ Tests are running in two modes:
 The same test code is run on both to ensure parity.
 """
 
+import asyncio
 import typing as t
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -273,6 +274,89 @@ class _RetryRemoteResourcesApp:
         return types.ReadResourceResult(contents=[])
 
 
+class _QueueErrorRemoteApp:
+    """Stub remote client that waits on first call; error queue should trigger retry."""
+
+    def __init__(self, error_queue: asyncio.Queue[httpx.HTTPStatusError], *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self._http_error_queue = error_queue
+        self._proxy_call_timeout_s = 5.0
+        self.call_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if self.call_count == 1:
+            await asyncio.Event().wait()
+        return types.CallToolResult(content=[], isError=False)
+
+
+class _TimeoutRemoteApp:
+    """Stub remote client that times out once then succeeds."""
+
+    def __init__(self, *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self._proxy_call_timeout_s = 0.01
+        self.call_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if self.call_count == 1:
+            await asyncio.sleep(1)
+        return types.CallToolResult(content=[], isError=False)
+
+
 @pytest.mark.asyncio
 async def test_proxy_read_resource_retries_on_timeout() -> None:
     """Proxy should retry/re-init non-tool handlers on timeout/network errors."""
@@ -287,6 +371,45 @@ async def test_proxy_read_resource_retries_on_timeout() -> None:
     # initialize called once at startup and once during retry
     assert remote.init_count == 2
     assert remote.read_count == 2
+
+
+@pytest.mark.asyncio
+async def test_call_tool_retries_when_http_error_queue_fires() -> None:
+    """CallTool should retry when an HTTP error is observed on the send path."""
+    error_queue: asyncio.Queue[httpx.HTTPStatusError] = asyncio.Queue()
+    remote = _QueueErrorRemoteApp(error_queue, retry_attempts=1)
+    app = await create_proxy_server(remote)
+
+    async def _enqueue_error() -> None:
+        await asyncio.sleep(0)
+        request = httpx.Request("POST", "http://example/mcp")
+        response = httpx.Response(404, request=request)
+        await error_queue.put(
+            httpx.HTTPStatusError("Retryable HTTP status: 404", request=request, response=response),
+        )
+
+    async with create_connected_server_and_client_session(app) as session:
+        enqueue_task = asyncio.create_task(_enqueue_error())
+        result = await session.call_tool("tool", {})
+        await enqueue_task
+
+    assert not result.isError
+    assert remote.call_count == 2
+    assert remote.init_count == 2
+
+
+@pytest.mark.asyncio
+async def test_call_tool_retries_on_call_timeout() -> None:
+    """CallTool should retry when the call hangs past the per-call timeout."""
+    remote = _TimeoutRemoteApp(retry_attempts=1)
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        result = await session.call_tool("tool", {})
+
+    assert not result.isError
+    assert remote.call_count == 2
+    assert remote.init_count == 2
 
 @pytest.fixture
 def server_can_list_resources(server: Server[object], resource: types.Resource) -> Server[object]:

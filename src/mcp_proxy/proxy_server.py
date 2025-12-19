@@ -50,6 +50,71 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         semaphore = asyncio.Semaphore(getattr(remote_app, "_proxy_max_inflight", 8))
         remote_app._proxy_semaphore = semaphore  # type: ignore[attr-defined]
 
+    error_queue = getattr(remote_app, "_http_error_queue", None)
+    call_timeout_s = getattr(remote_app, "_proxy_call_timeout_s", None)
+
+    async def _drain_error_queue() -> None:
+        if error_queue is None:
+            return
+        try:
+            while True:
+                error_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            return
+
+    async def _cancel_task(task: asyncio.Task[t.Any]) -> None:
+        if task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+
+    async def _await_remote_call(
+        call: t.Callable[[], t.Awaitable[t.Any]],
+        *,
+        label: str,
+    ) -> t.Any:
+        await _drain_error_queue()
+
+        async def _run() -> t.Any:
+            return await call()
+
+        if error_queue is None and call_timeout_s is None:
+            return await _run()
+
+        call_task = asyncio.create_task(_run())
+        queue_task: asyncio.Task[httpx.HTTPStatusError] | None = None
+        if error_queue is not None:
+            queue_task = asyncio.create_task(error_queue.get())
+
+        tasks = [call_task]
+        if queue_task is not None:
+            tasks.append(queue_task)
+
+        done, pending = await asyncio.wait(
+            tasks,
+            timeout=call_timeout_s,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if not done:
+            await _cancel_task(call_task)
+            if queue_task is not None:
+                await _cancel_task(queue_task)
+            raise TimeoutError(f"{label} timed out after {call_timeout_s}s")
+
+        if queue_task is not None and queue_task in done:
+            err = queue_task.result()
+            await _cancel_task(call_task)
+            raise err
+
+        if queue_task is not None:
+            await _cancel_task(queue_task)
+
+        return call_task.result()
+
     def _is_retryable_status(status: int | None) -> bool:
         if status is None:
             return False
@@ -81,7 +146,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         while True:
             try:
                 async with semaphore:
-                    return await call()
+                    return await _await_remote_call(call, label=label)
             except httpx.HTTPStatusError as exc:
                 attempts += 1
                 status = exc.response.status_code if exc.response else None
@@ -98,7 +163,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 await asyncio.sleep(backoff_s)
                 backoff_s = min(5.0, backoff_s * 2)
                 continue
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
                 attempts += 1
                 if attempts >= max_attempts:
                     raise
@@ -128,9 +193,9 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     continue
                 raise
 
-    async def _call_remote_once(call: t.Callable[[], t.Awaitable[t.Any]]) -> t.Any:
+    async def _call_remote_once(label: str, call: t.Callable[[], t.Awaitable[t.Any]]) -> t.Any:
         async with semaphore:
-            return await call()
+            return await _await_remote_call(call, label=label)
 
     logger.debug("Configuring proxied MCP server...")
     app: server.Server[object] = server.Server(name=response.serverInfo.name)
@@ -248,6 +313,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 while attempts < max_attempts:
                     try:
                         result = await _call_remote_once(
+                            f"CallTool {req.params.name}",
                             lambda: remote_app.call_tool(req.params.name, (req.params.arguments or {})),
                         )
                         if _is_session_error_result(result) and attempts + 1 < max_attempts:
@@ -279,7 +345,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                         await asyncio.sleep(backoff_s)
                         backoff_s = min(5.0, backoff_s * 2)
                         continue
-                    except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                    except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
                         attempts += 1
                         if attempts >= max_attempts:
                             raise

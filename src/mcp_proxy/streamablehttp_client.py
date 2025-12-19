@@ -3,6 +3,7 @@
 import asyncio
 import inspect
 import logging
+import os
 import sys
 from functools import partial
 from typing import Any
@@ -61,6 +62,20 @@ def _is_closed_stdio_error(exc: BaseException) -> bool:
     return False
 
 
+def _parse_call_timeout_s() -> float | None:
+    raw = os.getenv("MCP_PROXY_CALL_TIMEOUT_S")
+    if raw is None:
+        return 20.0
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid MCP_PROXY_CALL_TIMEOUT_S=%s; using default 20s", raw)
+        return 20.0
+    if value <= 0:
+        return None
+    return value
+
+
 async def run_streamablehttp_client(
     url: str,
     headers: dict[str, Any] | None = None,
@@ -80,6 +95,8 @@ async def run_streamablehttp_client(
     """
     attempts = 0
     max_attempts = 1 + max(0, retry_attempts)
+    error_queue: asyncio.Queue[httpx.HTTPStatusError] = asyncio.Queue(maxsize=32)
+    call_timeout_s = _parse_call_timeout_s()
 
     while attempts < max_attempts:
         # If our stdio is already closed, there's nothing useful we can do.
@@ -93,7 +110,11 @@ async def run_streamablehttp_client(
                 "url": url,
                 "headers": headers,
                 "auth": auth,
-                "httpx_client_factory": partial(custom_httpx_client, verify_ssl=verify_ssl),
+                "httpx_client_factory": partial(
+                    custom_httpx_client,
+                    verify_ssl=verify_ssl,
+                    error_queue=error_queue,
+                ),
                 # Don't terminate the whole proxy if the server->client GET stream drops.
                 # QuickMemory (and some other servers) can intermittently fail the GET stream
                 # while still accepting request/response POSTs. Exiting here causes Codex to see
@@ -121,6 +142,8 @@ async def run_streamablehttp_client(
             ):
                 # propagate retry budget to downstream handlers (used in CallTool wrapper)
                 session._retry_attempts = retry_attempts  # type: ignore[attr-defined]
+                session._http_error_queue = error_queue  # type: ignore[attr-defined]
+                session._proxy_call_timeout_s = call_timeout_s  # type: ignore[attr-defined]
                 app = await create_proxy_server(session)
                 try:
                     async with stdio_server() as (read_stream, write_stream):
