@@ -63,6 +63,42 @@ def make_always_fail_cm():
 
 
 @pytest.mark.asyncio
+async def test_streamable_retry_on_cancelled_error_when_stdio_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CancelledError should retry when stdio is open."""
+    class _OpenStdin:
+        closed = False
+
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.sys.stdin", _OpenStdin())
+
+    calls = {"count": 0}
+
+    @asynccontextmanager
+    async def _cm(*_: Any, **__: Any) -> AsyncIterator[tuple[Any, Any, Any]]:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise asyncio.CancelledError()
+        yield ("r", "w", None)
+
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.streamablehttp_client", _cm)
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.stdio_server", dummy_stdio_server)
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.create_proxy_server", AsyncMock(return_value=DummyApp()))
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.ClientSession", dummy_client_session)
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.asyncio.sleep", AsyncMock())
+
+    await run_streamablehttp_client(
+        url="http://example/mcp",
+        headers=None,
+        auth=None,
+        verify_ssl=None,
+        retry_attempts=1,
+    )
+
+    assert calls["count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_streamable_exits_cleanly_when_stdio_already_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     """If stdin is already closed, StreamableHTTP client should exit without retries."""
     class _ClosedStdin:
