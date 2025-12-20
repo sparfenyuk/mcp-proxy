@@ -9,6 +9,7 @@ Tests are running in two modes:
 The same test code is run on both to ensure parity.
 """
 
+import asyncio
 import typing as t
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -21,6 +22,7 @@ from mcp.server import Server
 from mcp.shared.exceptions import McpError
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import AnyUrl
+import httpx
 
 from mcp_proxy.proxy_server import create_proxy_server
 
@@ -114,6 +116,300 @@ def server_can_call_tool(
 
     return server_can_list_tools
 
+
+class _RetryRemoteApp:
+    """Stub remote client that fails once then succeeds, honoring retry budget."""
+
+    def __init__(self, first_error: Exception, *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self.first_error = first_error
+        self.call_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if self.call_count == 1:
+            raise self.first_error
+        return types.CallToolResult(content=[], isError=False)
+
+
+class _AlwaysFailRemoteApp:
+    """Stub remote client that always fails, to validate retry budgets."""
+
+    def __init__(self, error: Exception, *, retry_attempts: int):
+        self._retry_attempts = retry_attempts
+        self.error = error
+        self.call_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        raise self.error
+
+
+class _ResultThenSuccessRemoteApp:
+    """Stub remote client that returns an error result once, then succeeds."""
+
+    def __init__(self, first_result: types.CallToolResult, *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self.first_result = first_result
+        self.call_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if self.call_count == 1:
+            return self.first_result
+        return types.CallToolResult(content=[], isError=False)
+
+
+class _RetryRemoteResourcesApp:
+    """Stub remote client exposing resources, failing once then succeeding."""
+
+    def __init__(self, first_error: Exception, *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self.first_error = first_error
+        self.read_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=None,
+                logging=None,
+                prompts=None,
+                resources=types.ResourcesCapability(listChanged=True),
+            ),
+            instructions=None,
+        )
+
+    async def list_resources(self):
+        return types.ListResourcesResult(resources=[])
+
+    async def list_resource_templates(self):
+        return types.ListResourceTemplatesResult(resourceTemplates=[])
+
+    async def read_resource(self, uri: str):
+        self.read_count += 1
+        if self.read_count == 1:
+            raise self.first_error
+        return types.ReadResourceResult(contents=[])
+
+
+class _QueueErrorRemoteApp:
+    """Stub remote client that waits on first call; error queue should trigger retry."""
+
+    def __init__(self, error_queue: asyncio.Queue[httpx.HTTPStatusError], *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self._http_error_queue = error_queue
+        self._proxy_call_timeout_s = 5.0
+        self.call_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if self.call_count == 1:
+            await asyncio.Event().wait()
+        return types.CallToolResult(content=[], isError=False)
+
+
+class _TimeoutRemoteApp:
+    """Stub remote client that times out once then succeeds."""
+
+    def __init__(self, *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self._proxy_call_timeout_s = 0.01
+        self.call_count = 0
+        self.init_count = 0
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if self.call_count == 1:
+            await asyncio.sleep(1)
+        return types.CallToolResult(content=[], isError=False)
+
+
+@pytest.mark.asyncio
+async def test_proxy_read_resource_retries_on_timeout() -> None:
+    """Proxy should retry/re-init non-tool handlers on timeout/network errors."""
+
+    remote = _RetryRemoteResourcesApp(first_error=httpx.ReadTimeout("rt"), retry_attempts=1)
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.read_resource("resource://x")
+        assert res.contents == []
+
+    # initialize called once at startup and once during retry
+    assert remote.init_count == 2
+    assert remote.read_count == 2
+
+
+@pytest.mark.asyncio
+async def test_call_tool_retries_when_http_error_queue_fires() -> None:
+    """CallTool should retry when an HTTP error is observed on the send path."""
+    error_queue: asyncio.Queue[httpx.HTTPStatusError] = asyncio.Queue()
+    remote = _QueueErrorRemoteApp(error_queue, retry_attempts=1)
+    app = await create_proxy_server(remote)
+
+    async def _enqueue_error() -> None:
+        await asyncio.sleep(0)
+        request = httpx.Request("POST", "http://example/mcp")
+        response = httpx.Response(404, request=request)
+        await error_queue.put(
+            httpx.HTTPStatusError("Retryable HTTP status: 404", request=request, response=response),
+        )
+
+    async with create_connected_server_and_client_session(app) as session:
+        enqueue_task = asyncio.create_task(_enqueue_error())
+        result = await session.call_tool("tool", {})
+        await enqueue_task
+
+    assert not result.isError
+    assert remote.call_count == 2
+    assert remote.init_count == 2
+
+
+@pytest.mark.asyncio
+async def test_call_tool_retries_on_call_timeout() -> None:
+    """CallTool should retry when the call hangs past the per-call timeout."""
+    remote = _TimeoutRemoteApp(retry_attempts=1)
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        result = await session.call_tool("tool", {})
+
+    assert not result.isError
+    assert remote.call_count == 2
+    assert remote.init_count == 2
 
 @pytest.fixture
 def server_can_list_resources(server: Server[object], resource: types.Resource) -> Server[object]:
@@ -537,3 +833,202 @@ async def test_call_tool_with_error(
 
         call_tool_result = await session.call_tool("tool", {})
         assert call_tool_result.isError
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_http_status() -> None:
+    """Proxy should re-init and replay when call_tool raises HTTPStatusError."""
+
+    err = httpx.HTTPStatusError(
+        "status 404",
+        request=httpx.Request("POST", "http://example/mcp"),
+        response=httpx.Response(404, request=httpx.Request("POST", "http://example/mcp")),
+    )
+    remote = _RetryRemoteApp(first_error=err)
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        # proxy returns EmptyResult on success path
+        assert not res.isError
+        assert res.content == []
+
+    # initialize called once at startup and once during retry
+    assert remote.init_count == 2
+    assert remote.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_session_not_found() -> None:
+    """Proxy should re-init and replay when server returns session-not-found error payload."""
+
+    remote = _RetryRemoteApp(first_error=Exception("Session not found (-32001)"))
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    # initialize called once at startup and once during retry
+    assert remote.init_count == 2
+    assert remote.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_session_not_found_mcp_error() -> None:
+    """Proxy should re-init and replay when server returns McpError code -32001."""
+
+    remote = _RetryRemoteApp(
+        first_error=McpError(types.ErrorData(code=-32001, message="Session not found")),
+    )
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    assert remote.init_count == 2
+    assert remote.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_session_terminated_mcp_error() -> None:
+    """Proxy should re-init and replay when server returns McpError 'Session terminated'."""
+
+    remote = _RetryRemoteApp(
+        first_error=McpError(types.ErrorData(code=32600, message="Session terminated")),
+    )
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    assert remote.init_count == 2
+    assert remote.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_session_not_found_exception_group() -> None:
+    """Proxy should re-init and replay when session-not-found is wrapped."""
+
+    remote = _RetryRemoteApp(
+        first_error=ExceptionGroup("wrapped", [Exception("Session not found (-32001)")]),
+    )
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    assert remote.init_count == 2
+    assert remote.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_http_status_exception_group() -> None:
+    """Proxy should re-init and replay when HTTPStatusError is wrapped."""
+
+    err = httpx.HTTPStatusError(
+        "status 404",
+        request=httpx.Request("POST", "http://example/mcp"),
+        response=httpx.Response(404, request=httpx.Request("POST", "http://example/mcp")),
+    )
+    remote = _RetryRemoteApp(first_error=ExceptionGroup("wrapped", [err]))
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    assert remote.init_count == 2
+    assert remote.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_does_not_retry_when_budget_zero() -> None:
+    """Proxy should not replay when retry budget is zero."""
+
+    remote = _RetryRemoteApp(
+        first_error=Exception("Session not found (-32001)"),
+        retry_attempts=0,
+    )
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert res.isError
+
+    assert remote.init_count == 1
+    assert remote.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_honors_retry_budget_when_all_attempts_fail() -> None:
+    """Proxy should stop after max attempts and not exceed init/call counts."""
+
+    err = httpx.HTTPStatusError(
+        "status 404",
+        request=httpx.Request("POST", "http://example/mcp"),
+        response=httpx.Response(404, request=httpx.Request("POST", "http://example/mcp")),
+    )
+    remote = _AlwaysFailRemoteApp(error=err, retry_attempts=2)
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert res.isError
+
+    # retry_attempts=2 => max_attempts=3 total call attempts (initial + 2 retries)
+    assert remote.call_count == 3
+    # initialize once at startup + once per retry (2) => 3
+    assert remote.init_count == 3
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_session_terminated_error_result() -> None:
+    """Proxy should re-init and replay when remote returns an error result indicating session termination."""
+
+    remote = _ResultThenSuccessRemoteApp(
+        types.CallToolResult(
+            content=[types.TextContent(type="text", text="Mcp error: 32600: Session terminated")],
+            isError=True,
+        ),
+        retry_attempts=1,
+    )
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    assert remote.call_count == 2
+    assert remote.init_count == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_retries_on_session_not_found_error_result() -> None:
+    """Proxy should re-init and replay when remote returns an error result indicating session loss."""
+
+    remote = _ResultThenSuccessRemoteApp(
+        types.CallToolResult(
+            content=[types.TextContent(type="text", text="Session not found (-32001)")],
+            isError=True,
+        ),
+        retry_attempts=1,
+    )
+    app = await create_proxy_server(remote)
+
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+        assert not res.isError
+        assert res.content == []
+
+    assert remote.call_count == 2
+    assert remote.init_count == 2

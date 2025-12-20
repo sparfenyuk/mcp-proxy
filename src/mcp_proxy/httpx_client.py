@@ -4,6 +4,7 @@ This module patches the create_mcp_http_client function to add comprehensive
 request and response logging capabilities.
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -17,6 +18,7 @@ def custom_httpx_client(  # noqa: C901
     timeout: httpx.Timeout | None = None,
     auth: httpx.Auth | None = None,
     verify_ssl: bool | str | None = None,
+    error_queue: asyncio.Queue[httpx.HTTPStatusError] | None = None,
 ) -> httpx.AsyncClient:
     """Create a standardized httpx AsyncClient with MCP defaults and logging.
 
@@ -112,6 +114,27 @@ def custom_httpx_client(  # noqa: C901
         # Log response headers
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Response Headers: %s", dict(response.headers))
+
+        # Treat any 4xx and 503 as retryable to trigger outer reconnect/re-init logic.
+        status = response.status_code
+        if 400 <= status < 500 or status == 503:
+            logger.warning(
+                "Retryable HTTP status %s for %s %s; raising to trigger reconnect",
+                status,
+                response.request.method,
+                response.request.url,
+            )
+            exc = httpx.HTTPStatusError(
+                f"Retryable HTTP status: {status}",
+                request=response.request,
+                response=response,
+            )
+            if error_queue is not None:
+                try:
+                    error_queue.put_nowait(exc)
+                except asyncio.QueueFull:
+                    logger.debug("HTTP error queue full; dropping status %s", status)
+            raise exc
 
     # Add event hooks
     kwargs["event_hooks"] = {
