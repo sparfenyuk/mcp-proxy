@@ -65,7 +65,7 @@ def _is_closed_stdio_error(exc: BaseException) -> bool:
 def _parse_call_timeout_s() -> float | None:
     raw = os.getenv("MCP_PROXY_CALL_TIMEOUT_S")
     if raw is None:
-        return 20.0
+        return 15.0
     try:
         value = float(raw)
     except ValueError:
@@ -102,7 +102,7 @@ async def run_streamablehttp_client(
         # If our stdio is already closed, there's nothing useful we can do.
         # Exiting quietly avoids noisy ExceptionGroup tracebacks.
         if _stdin_is_closed():
-            logger.debug("stdio already closed; exiting StreamableHTTP client loop")
+            logger.info("stdio already closed; exiting (caller likely cancelled/timeout)")
             return
 
         try:
@@ -154,7 +154,7 @@ async def run_streamablehttp_client(
                         )
                 except ValueError as exc:
                     if _is_closed_stdio_error(exc) or _stdin_is_closed():
-                        logger.debug("stdio closed during startup; exiting")
+                        logger.info("stdio closed during startup; exiting (caller likely cancelled/timeout)")
                         return
                     raise
                 return
@@ -188,7 +188,7 @@ async def run_streamablehttp_client(
             await asyncio.sleep(0.5)
         except Exception as exc:  # noqa: BLE001
             if _is_closed_stdio_error(exc) or _stdin_is_closed():
-                logger.debug("stdio closed; exiting")
+                logger.info("stdio closed; exiting (caller likely cancelled/timeout)")
                 return
             attempts += 1
             if attempts >= max_attempts:
