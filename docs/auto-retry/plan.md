@@ -14,6 +14,7 @@ Purpose: capture the work needed so future agents can make mcp-proxy recover and
 - [x] Add **opt-in** auto-retry for remote StreamableHTTP/SSE init and request failures (single quick retry with backoff) behind `--retry-remote` (default: off) and configurable attempts via `--remote-retries N`.
 - [ ] Normalize and log the exact upstream URL used (including trailing slash handling) so 404s point to a real path mismatch.
 - [x] When upstream returns non-200/202 or the session dies (`32600 Session terminated`), attempt one re-init; if that fails, return a richer error to the client.
+- [x] Surface send-path HTTP errors (e.g., 404 on POST) via an error queue so retries can re-init the session instead of silently timing out.
 - [ ] Improve logging/messages surfaced to clients: include status code, upstream URL, and suggestion to check backend health/path/auth.
 - [x] Tests: added coverage for retryable 404s, send-path errors, call timeouts, and retry-budget guard. Connection-reset coverage still TODO.
 

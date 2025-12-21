@@ -238,6 +238,54 @@ class _ResultThenSuccessRemoteApp:
         return types.CallToolResult(content=[], isError=False)
 
 
+class _RebuildOn404RemoteApp:
+    """Stub remote client that rebuilds transport after a 404 then succeeds."""
+
+    def __init__(self, *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self.call_count = 0
+        self.init_count = 0
+        self.rebuild_count = 0
+        self.rebuilt = False
+
+    async def initialize(self):
+        self.init_count += 1
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def rebuild(self):
+        self.rebuild_count += 1
+        self.rebuilt = True
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if not self.rebuilt:
+            request = httpx.Request("POST", "http://example.test/mcp")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("Session not found", request=request, response=response)
+        return types.CallToolResult(content=[], isError=False)
+
+
 class _RetryRemoteResourcesApp:
     """Stub remote client exposing resources, failing once then succeeding."""
 
@@ -1032,3 +1080,27 @@ async def test_proxy_call_tool_retries_on_session_not_found_error_result() -> No
 
     assert remote.call_count == 2
     assert remote.init_count == 2
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_rebuilds_transport_on_404() -> None:
+    #region Arrange
+    remote = _RebuildOn404RemoteApp(retry_attempts=1)
+    app = await create_proxy_server(remote)
+    #endregion Arrange
+
+    #region Initial Assert
+    assert remote.init_count == 1
+    assert remote.rebuild_count == 0
+    #endregion Initial Assert
+
+    #region Act
+    async with create_connected_server_and_client_session(app) as session:
+        res = await session.call_tool("tool", {})
+    #endregion Act
+
+    #region Assert
+    assert not res.isError
+    assert remote.rebuild_count == 1
+    assert remote.call_count == 2
+    #endregion Assert

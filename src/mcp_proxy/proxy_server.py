@@ -115,6 +115,35 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
         return call_task.result()
 
+    def _should_rebuild_session(status: int | None) -> bool:
+        return status == 404
+
+    async def _rebuild_or_initialize(
+        label: str,
+        *,
+        status: int | None,
+        attempts: int,
+        max_attempts: int,
+    ) -> None:
+        if _should_rebuild_session(status) and hasattr(remote_app, "rebuild"):
+            logger.warning(
+                "%s got HTTP %s; rebuilding transport (%s/%s)",
+                label,
+                status,
+                attempts,
+                max_attempts - 1,
+            )
+            await remote_app.rebuild()  # type: ignore[attr-defined]
+            return
+        logger.warning(
+            "%s got HTTP %s; re-initializing session (%s/%s)",
+            label,
+            status,
+            attempts,
+            max_attempts - 1,
+        )
+        await remote_app.initialize()
+
     def _is_retryable_status(status: int | None) -> bool:
         if status is None:
             return False
@@ -152,14 +181,12 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 status = exc.response.status_code if exc.response else None
                 if not _is_retryable_status(status) or attempts >= max_attempts:
                     raise
-                logger.warning(
-                    "%s got HTTP %s; re-initializing session (%s/%s)",
+                await _rebuild_or_initialize(
                     label,
-                    status,
-                    attempts,
-                    max_attempts - 1,
+                    status=status,
+                    attempts=attempts,
+                    max_attempts=max_attempts,
                 )
-                await remote_app.initialize()
                 await asyncio.sleep(backoff_s)
                 backoff_s = min(5.0, backoff_s * 2)
                 continue
@@ -334,14 +361,12 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                         status = exc.response.status_code if exc.response else None
                         if not _is_retryable_status(status) or attempts >= max_attempts:
                             raise
-                        logger.warning(
-                            "CallTool %s got HTTP %s; re-initializing session (%s/%s)",
-                            req.params.name,
-                            status,
-                            attempts,
-                            max_attempts - 1,
+                        await _rebuild_or_initialize(
+                            f"CallTool {req.params.name}",
+                            status=status,
+                            attempts=attempts,
+                            max_attempts=max_attempts,
                         )
-                        await remote_app.initialize()
                         await asyncio.sleep(backoff_s)
                         backoff_s = min(5.0, backoff_s * 2)
                         continue
@@ -364,14 +389,12 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                         status = _retryable_status_in_error(exc)
                         if status is not None and attempts + 1 < max_attempts:
                             attempts += 1
-                            logger.warning(
-                                "CallTool %s got HTTP %s (wrapped); re-initializing session (%s/%s)",
-                                req.params.name,
-                                status,
-                                attempts,
-                                max_attempts - 1,
+                            await _rebuild_or_initialize(
+                                f"CallTool {req.params.name} (wrapped)",
+                                status=status,
+                                attempts=attempts,
+                                max_attempts=max_attempts,
                             )
-                            await remote_app.initialize()
                             await asyncio.sleep(backoff_s)
                             backoff_s = min(5.0, backoff_s * 2)
                             continue

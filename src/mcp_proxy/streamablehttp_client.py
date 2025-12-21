@@ -7,6 +7,7 @@ import os
 import sys
 from functools import partial
 from typing import Any
+from contextlib import AsyncExitStack
 
 import httpx
 from mcp.client.session import ClientSession
@@ -76,6 +77,52 @@ def _parse_call_timeout_s() -> float | None:
     return value
 
 
+class _ReconnectableSession:
+    def __init__(
+        self,
+        *,
+        stream_kwargs: dict[str, Any],
+    ) -> None:
+        self._stream_kwargs = stream_kwargs
+        self._session: ClientSession | None = None
+        self._stack: AsyncExitStack | None = None
+        self._lock = asyncio.Lock()
+
+    async def _open_session(self) -> ClientSession:
+        stack = AsyncExitStack()
+        read, write, _ = await stack.enter_async_context(streamablehttp_client(**self._stream_kwargs))
+        session = await stack.enter_async_context(ClientSession(read, write))
+        self._stack = stack
+        self._session = session
+        return session
+
+    async def open(self) -> ClientSession:
+        async with self._lock:
+            if self._session is None:
+                return await self._open_session()
+            return self._session
+
+    async def rebuild(self) -> ClientSession:
+        async with self._lock:
+            await self._close_locked()
+            return await self._open_session()
+
+    async def close(self) -> None:
+        async with self._lock:
+            await self._close_locked()
+
+    async def _close_locked(self) -> None:
+        if self._stack is not None:
+            await self._stack.aclose()
+        self._stack = None
+        self._session = None
+
+    def __getattr__(self, name: str) -> Any:
+        if self._session is None:
+            raise AttributeError(name)
+        return getattr(self._session, name)
+
+
 async def run_streamablehttp_client(
     url: str,
     headers: dict[str, Any] | None = None,
@@ -134,30 +181,29 @@ async def run_streamablehttp_client(
                 # If the callable is not introspectable, don't pass optional kwargs.
                 pass
 
-            async with (
-                streamablehttp_client(
-                    **stream_kwargs,
-                ) as (read, write, _),
-                ClientSession(read, write) as session,
-            ):
-                # propagate retry budget to downstream handlers (used in CallTool wrapper)
-                session._retry_attempts = retry_attempts  # type: ignore[attr-defined]
-                session._http_error_queue = error_queue  # type: ignore[attr-defined]
-                session._proxy_call_timeout_s = call_timeout_s  # type: ignore[attr-defined]
-                app = await create_proxy_server(session)
-                try:
-                    async with stdio_server() as (read_stream, write_stream):
-                        await app.run(
-                            read_stream,
-                            write_stream,
-                            app.create_initialization_options(),
-                        )
-                except ValueError as exc:
-                    if _is_closed_stdio_error(exc) or _stdin_is_closed():
-                        logger.info("stdio closed during startup; exiting (caller likely cancelled/timeout)")
-                        return
-                    raise
-                return
+            reconnectable = _ReconnectableSession(stream_kwargs=stream_kwargs)
+            # Ensure the initial transport/session is created so retries behave as expected.
+            await reconnectable.open()
+            # propagate retry budget to downstream handlers (used in CallTool wrapper)
+            reconnectable._retry_attempts = retry_attempts  # type: ignore[attr-defined]
+            reconnectable._http_error_queue = error_queue  # type: ignore[attr-defined]
+            reconnectable._proxy_call_timeout_s = call_timeout_s  # type: ignore[attr-defined]
+            app = await create_proxy_server(reconnectable)
+            try:
+                async with stdio_server() as (read_stream, write_stream):
+                    await app.run(
+                        read_stream,
+                        write_stream,
+                        app.create_initialization_options(),
+                    )
+            except ValueError as exc:
+                if _is_closed_stdio_error(exc) or _stdin_is_closed():
+                    logger.info("stdio closed during startup; exiting (caller likely cancelled/timeout)")
+                    return
+                raise
+            finally:
+                await reconnectable.close()
+            return
         except asyncio.CancelledError as exc:
             # Some cancellations occur while stdio is still alive (e.g., sibling task cancels
             # a connect attempt). If stdio is open, treat this as retryable.
