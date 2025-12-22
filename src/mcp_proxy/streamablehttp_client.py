@@ -153,6 +153,7 @@ async def run_streamablehttp_client(
             return
 
         try:
+            request_state: dict[str, Any] = {}
             stream_kwargs: dict[str, Any] = {
                 "url": url,
                 "headers": headers,
@@ -161,6 +162,7 @@ async def run_streamablehttp_client(
                     custom_httpx_client,
                     verify_ssl=verify_ssl,
                     error_queue=error_queue,
+                    request_state=request_state,
                 ),
                 # Don't terminate the whole proxy if the server->client GET stream drops.
                 # QuickMemory (and some other servers) can intermittently fail the GET stream
@@ -188,6 +190,7 @@ async def run_streamablehttp_client(
             reconnectable._retry_attempts = retry_attempts  # type: ignore[attr-defined]
             reconnectable._http_error_queue = error_queue  # type: ignore[attr-defined]
             reconnectable._proxy_call_timeout_s = call_timeout_s  # type: ignore[attr-defined]
+            reconnectable._http_request_state = request_state  # type: ignore[attr-defined]
             app = await create_proxy_server(reconnectable)
             try:
                 async with stdio_server() as (read_stream, write_stream):

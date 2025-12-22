@@ -6,6 +6,7 @@ This server is created independent of any transport mechanism.
 import asyncio
 import logging
 import typing as t
+import time
 
 import httpx
 
@@ -51,6 +52,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         remote_app._proxy_semaphore = semaphore  # type: ignore[attr-defined]
 
     error_queue = getattr(remote_app, "_http_error_queue", None)
+    request_state = getattr(remote_app, "_http_request_state", None)
     call_timeout_s = getattr(remote_app, "_proxy_call_timeout_s", None)
 
     async def _drain_error_queue() -> None:
@@ -70,6 +72,17 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
             await task
         except asyncio.CancelledError:
             return
+
+    def _describe_last_post() -> str | None:
+        if not isinstance(request_state, dict):
+            return None
+        ts = request_state.get("last_post_ts")
+        status = request_state.get("last_post_status")
+        url = request_state.get("last_post_url")
+        if ts is None:
+            return None
+        age_s = time.monotonic() - ts
+        return f"last POST {status} {url} ({age_s:.1f}s ago)"
 
     async def _await_remote_call(
         call: t.Callable[[], t.Awaitable[t.Any]],
@@ -103,6 +116,20 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
             await _cancel_task(call_task)
             if queue_task is not None:
                 await _cancel_task(queue_task)
+            detail = _describe_last_post()
+            if detail:
+                logger.warning(
+                    "%s timed out after %ss awaiting response; %s; possible SSE stall",
+                    label,
+                    call_timeout_s,
+                    detail,
+                )
+            else:
+                logger.warning(
+                    "%s timed out after %ss awaiting response",
+                    label,
+                    call_timeout_s,
+                )
             raise TimeoutError(f"{label} timed out after {call_timeout_s}s")
 
         if queue_task is not None and queue_task in done:

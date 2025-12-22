@@ -6,6 +6,7 @@ request and response logging capabilities.
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -19,6 +20,7 @@ def custom_httpx_client(  # noqa: C901
     auth: httpx.Auth | None = None,
     verify_ssl: bool | str | None = None,
     error_queue: asyncio.Queue[httpx.HTTPStatusError] | None = None,
+    request_state: dict[str, Any] | None = None,
 ) -> httpx.AsyncClient:
     """Create a standardized httpx AsyncClient with MCP defaults and logging.
 
@@ -114,6 +116,11 @@ def custom_httpx_client(  # noqa: C901
         # Log response headers
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Response Headers: %s", dict(response.headers))
+
+        if request_state is not None and response.request.method == "POST":
+            request_state["last_post_ts"] = time.monotonic()
+            request_state["last_post_status"] = response.status_code
+            request_state["last_post_url"] = str(response.request.url)
 
         # Treat any 4xx and 503 as retryable to trigger outer reconnect/re-init logic.
         status = response.status_code
