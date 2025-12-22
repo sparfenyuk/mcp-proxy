@@ -75,6 +75,7 @@ Environment Variables
 | Name               | Required | Description                                                                  | Example    |
 | ------------------ | -------- | ---------------------------------------------------------------------------- | ---------- |
 | `API_ACCESS_TOKEN` | No       | Can be used instead of `--headers Authorization 'Bearer <API_ACCESS_TOKEN>'` | YOUR_TOKEN |
+| `MCP_PROXY_CALL_TIMEOUT_S` | No | Per-call timeout in seconds before retrying (set ≤0 to disable). Helpful for detecting stalled SSE responses. | 10 |
 
 ### 1.2 Example usage
 
