@@ -372,6 +372,7 @@ class _TimeoutRemoteApp:
         self._proxy_call_timeout_s = 0.01
         self.call_count = 0
         self.init_count = 0
+        self.rebuild_count = 0
 
     async def initialize(self):
         self.init_count += 1
@@ -397,6 +398,9 @@ class _TimeoutRemoteApp:
                 ),
             ],
         )
+
+    async def rebuild(self):
+        self.rebuild_count += 1
 
     async def call_tool(self, name: str, arguments: dict[str, t.Any]):
         self.call_count += 1
@@ -457,7 +461,8 @@ async def test_call_tool_retries_on_call_timeout() -> None:
 
     assert not result.isError
     assert remote.call_count == 2
-    assert remote.init_count == 2
+    assert remote.init_count == 1
+    assert remote.rebuild_count == 1
 
 @pytest.fixture
 def server_can_list_resources(server: Server[object], resource: types.Resource) -> Server[object]:
