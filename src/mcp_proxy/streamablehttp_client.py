@@ -126,13 +126,17 @@ class _ReconnectableSession:
         return session
 
     async def open(self) -> ClientSession:
+        logger.info("streamablehttp rebuild: open requested")
         async with self._lock:
+            logger.info("streamablehttp rebuild: open lock acquired")
             if self._session is None:
                 return await self._open_session()
             return self._session
 
     async def rebuild(self) -> ClientSession:
+        logger.info("streamablehttp rebuild: rebuild requested")
         async with self._lock:
+            logger.info("streamablehttp rebuild: rebuild lock acquired")
             await self._close_locked()
             return await self._open_session()
 
