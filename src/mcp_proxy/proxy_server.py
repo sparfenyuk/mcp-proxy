@@ -220,6 +220,13 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
             return False
         return 400 <= status < 500 or status == 503
 
+    def _retry_sleep_for(status: int | None, *, session_error: bool) -> float:
+        if status == 404:
+            return 0.0
+        if session_error:
+            return 0.2
+        return 0.0
+
     def _session_error_in_exception(err: BaseException) -> bool:
         for leaf in _iter_exceptions(err):
             if isinstance(leaf, McpError):
@@ -258,8 +265,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     attempts=attempts,
                     max_attempts=max_attempts,
                 )
-                await asyncio.sleep(backoff_s)
-                backoff_s = min(5.0, backoff_s * 2)
+                sleep_s = _retry_sleep_for(status, session_error=False) or backoff_s
+                if sleep_s:
+                    await asyncio.sleep(sleep_s)
+                if status != 404:
+                    backoff_s = min(5.0, backoff_s * 2)
                 continue
             except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
                 attempts += 1
@@ -275,7 +285,8 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 backoff_s = min(5.0, backoff_s * 2)
                 continue
             except Exception as exc:  # noqa: BLE001
-                if _session_error_in_exception(exc) and attempts + 1 < max_attempts:
+                session_error = _session_error_in_exception(exc)
+                if session_error and attempts + 1 < max_attempts:
                     attempts += 1
                     logger.warning(
                         "%s got session error; re-initializing session (%s/%s)",
@@ -284,7 +295,9 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                         max_attempts - 1,
                     )
                     await remote_app.initialize()
-                    await asyncio.sleep(backoff_s)
+                    sleep_s = _retry_sleep_for(None, session_error=True) or backoff_s
+                    if sleep_s:
+                        await asyncio.sleep(sleep_s)
                     backoff_s = min(5.0, backoff_s * 2)
                     continue
                 raise
@@ -436,8 +449,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                             attempts=attempts,
                             max_attempts=max_attempts,
                         )
-                        await asyncio.sleep(backoff_s)
-                        backoff_s = min(5.0, backoff_s * 2)
+                        sleep_s = _retry_sleep_for(status, session_error=False) or backoff_s
+                        if sleep_s:
+                            await asyncio.sleep(sleep_s)
+                        if status != 404:
+                            backoff_s = min(5.0, backoff_s * 2)
                         continue
                     except (httpx.TimeoutException, httpx.NetworkError, TimeoutError) as exc:
                         attempts += 1
@@ -449,7 +465,8 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                             max_attempts=max_attempts,
                             detail=_describe_last_post(),
                         )
-                        await asyncio.sleep(backoff_s)
+                        if backoff_s:
+                            await asyncio.sleep(backoff_s)
                         backoff_s = min(5.0, backoff_s * 2)
                         continue
                     except Exception as exc:  # noqa: BLE001
@@ -462,12 +479,16 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                                 attempts=attempts,
                                 max_attempts=max_attempts,
                             )
-                            await asyncio.sleep(backoff_s)
-                            backoff_s = min(5.0, backoff_s * 2)
+                            sleep_s = _retry_sleep_for(status, session_error=False) or backoff_s
+                            if sleep_s:
+                                await asyncio.sleep(sleep_s)
+                            if status != 404:
+                                backoff_s = min(5.0, backoff_s * 2)
                             continue
 
                         # Handle JSON-RPC session errors that come back as 200 with an error payload
-                        if _session_error_in_exception(exc) and attempts + 1 < max_attempts:
+                        session_error = _session_error_in_exception(exc)
+                        if session_error and attempts + 1 < max_attempts:
                             attempts += 1
                             logger.warning(
                                 "CallTool %s got session error; re-initializing session (%s/%s)",
@@ -476,7 +497,9 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                                 max_attempts - 1,
                             )
                             await remote_app.initialize()
-                            await asyncio.sleep(backoff_s)
+                            sleep_s = _retry_sleep_for(None, session_error=True) or backoff_s
+                            if sleep_s:
+                                await asyncio.sleep(sleep_s)
                             backoff_s = min(5.0, backoff_s * 2)
                             continue
                         raise
