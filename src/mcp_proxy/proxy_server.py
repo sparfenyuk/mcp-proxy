@@ -176,22 +176,41 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         *,
         attempts: int,
         max_attempts: int,
+        detail: str | None = None,
     ) -> None:
         if hasattr(remote_app, "rebuild"):
+            if detail:
+                logger.warning(
+                    "%s timed out; rebuilding transport (%s/%s); %s",
+                    label,
+                    attempts,
+                    max_attempts - 1,
+                    detail,
+                )
+            else:
+                logger.warning(
+                    "%s timed out; rebuilding transport (%s/%s)",
+                    label,
+                    attempts,
+                    max_attempts - 1,
+                )
+            await remote_app.rebuild()  # type: ignore[attr-defined]
+            return
+        if detail:
             logger.warning(
-                "%s timed out; rebuilding transport (%s/%s)",
+                "%s timed out; re-initializing session (%s/%s); %s",
+                label,
+                attempts,
+                max_attempts - 1,
+                detail,
+            )
+        else:
+            logger.warning(
+                "%s timed out; re-initializing session (%s/%s)",
                 label,
                 attempts,
                 max_attempts - 1,
             )
-            await remote_app.rebuild()  # type: ignore[attr-defined]
-            return
-        logger.warning(
-            "%s timed out; re-initializing session (%s/%s)",
-            label,
-            attempts,
-            max_attempts - 1,
-        )
         await remote_app.initialize()
 
     def _is_retryable_status(status: int | None) -> bool:
@@ -248,6 +267,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     label,
                     attempts=attempts,
                     max_attempts=max_attempts,
+                    detail=_describe_last_post(),
                 )
                 await asyncio.sleep(backoff_s)
                 backoff_s = min(5.0, backoff_s * 2)
@@ -425,6 +445,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                             f"CallTool {req.params.name}",
                             attempts=attempts,
                             max_attempts=max_attempts,
+                            detail=_describe_last_post(),
                         )
                         await asyncio.sleep(backoff_s)
                         backoff_s = min(5.0, backoff_s * 2)
