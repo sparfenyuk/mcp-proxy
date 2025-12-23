@@ -84,6 +84,34 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         age_s = time.monotonic() - ts
         return f"last POST {status} {url} ({age_s:.1f}s ago)"
 
+    def _describe_last_get() -> str | None:
+        if not isinstance(request_state, dict):
+            return None
+        ts = request_state.get("last_get_ts")
+        status = request_state.get("last_get_status")
+        url = request_state.get("last_get_url")
+        if ts is None:
+            return None
+        age_s = time.monotonic() - ts
+        return f"last GET {status} {url} ({age_s:.1f}s ago)"
+
+    def _describe_last_session() -> str | None:
+        if not isinstance(request_state, dict):
+            return None
+        session_id = request_state.get("last_request_session_id")
+        if not session_id:
+            return None
+        return f"session={session_id}"
+
+    def _describe_call_context() -> str | None:
+        parts = [
+            _describe_last_session(),
+            _describe_last_post(),
+            _describe_last_get(),
+        ]
+        details = "; ".join(part for part in parts if part)
+        return details or None
+
     async def _await_remote_call(
         call: t.Callable[[], t.Awaitable[t.Any]],
         *,
@@ -118,7 +146,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
             await _cancel_task(call_task)
             if queue_task is not None:
                 await _cancel_task(queue_task)
-            detail = _describe_last_post()
+            detail = _describe_call_context()
             if detail:
                 logger.warning(
                     "%s timed out after %ss awaiting response; %s; possible SSE stall",
@@ -136,6 +164,15 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
         if queue_task is not None and queue_task in done:
             err = queue_task.result()
+            status = err.response.status_code if err.response else None
+            detail = _describe_call_context()
+            if detail:
+                logger.warning(
+                    "%s saw retryable HTTP status %s; %s",
+                    label,
+                    status,
+                    detail,
+                )
             await _cancel_task(call_task)
             raise err
 

@@ -102,6 +102,11 @@ def custom_httpx_client(  # noqa: C901
                 else:
                     safe_headers[key] = value
             logger.info("Request Headers: %s", safe_headers)
+        if request_state is not None:
+            request_state["last_request_ts"] = time.monotonic()
+            request_state["last_request_method"] = request.method
+            request_state["last_request_url"] = str(request.url)
+            request_state["last_request_session_id"] = request.headers.get("mcp-session-id")
 
     async def log_response(response: httpx.Response) -> None:
         """Log HTTP response details."""
@@ -117,10 +122,18 @@ def custom_httpx_client(  # noqa: C901
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Response Headers: %s", dict(response.headers))
 
-        if request_state is not None and response.request.method == "POST":
-            request_state["last_post_ts"] = time.monotonic()
-            request_state["last_post_status"] = response.status_code
-            request_state["last_post_url"] = str(response.request.url)
+        if request_state is not None:
+            now = time.monotonic()
+            if response.request.method == "POST":
+                request_state["last_post_ts"] = now
+                request_state["last_post_status"] = response.status_code
+                request_state["last_post_url"] = str(response.request.url)
+                request_state["last_post_session_id"] = response.request.headers.get("mcp-session-id")
+            elif response.request.method == "GET":
+                request_state["last_get_ts"] = now
+                request_state["last_get_status"] = response.status_code
+                request_state["last_get_url"] = str(response.request.url)
+                request_state["last_get_session_id"] = response.request.headers.get("mcp-session-id")
 
         # Treat any 4xx and 503 as retryable to trigger outer reconnect/re-init logic.
         status = response.status_code
