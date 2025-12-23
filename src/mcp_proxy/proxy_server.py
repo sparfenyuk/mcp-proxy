@@ -263,6 +263,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 max_attempts - 1,
             )
             try:
+                logger.info("%s rebuild invoking remote_app.rebuild() type=%s", label, type(remote_app).__name__)
                 await asyncio.wait_for(remote_app.rebuild(), timeout=5.0)  # type: ignore[attr-defined]
             except asyncio.TimeoutError:
                 logger.warning(
@@ -321,6 +322,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     max_attempts - 1,
                 )
             try:
+                logger.info("%s rebuild invoking remote_app.rebuild() type=%s", label, type(remote_app).__name__)
                 await asyncio.wait_for(remote_app.rebuild(), timeout=5.0)  # type: ignore[attr-defined]
             except asyncio.TimeoutError:
                 logger.warning(
