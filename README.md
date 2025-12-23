@@ -76,6 +76,9 @@ Environment Variables
 | ------------------ | -------- | ---------------------------------------------------------------------------- | ---------- |
 | `API_ACCESS_TOKEN` | No       | Can be used instead of `--headers Authorization 'Bearer <API_ACCESS_TOKEN>'` | YOUR_TOKEN |
 | `MCP_PROXY_CALL_TIMEOUT_S` | No | Per-call timeout in seconds before retrying (set ≤0 to disable). Helpful for detecting stalled SSE responses. | 10 |
+| `MCP_PROXY_RECONNECT_TIMEOUT_S` | No | Timeout in seconds for rebuilding the StreamableHTTP transport (opening new stream + session). | 5 |
+
+When using StreamableHTTP, if the remote server returns HTTP 404 for a request that includes an `MCP-Session-Id`, `mcp-proxy` will clear the session id and force a fresh `initialize` before the next call. This follows the MCP transport spec for session invalidation.
 
 ### 1.2 Example usage
 
