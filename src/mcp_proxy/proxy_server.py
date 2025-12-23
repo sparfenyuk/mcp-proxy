@@ -89,6 +89,8 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         *,
         label: str,
     ) -> t.Any:
+        if call_timeout_s is not None:
+            logger.debug("%s starting call; timeout=%.1fs", label, call_timeout_s)
         await _drain_error_queue()
 
         async def _run() -> t.Any:
