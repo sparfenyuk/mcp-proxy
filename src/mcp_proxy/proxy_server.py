@@ -155,14 +155,29 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         max_attempts: int,
     ) -> None:
         if _should_rebuild_session(status) and hasattr(remote_app, "rebuild"):
+            start = time.monotonic()
             logger.warning(
-                "%s got HTTP %s; rebuilding transport (%s/%s)",
+                "%s got HTTP %s; rebuilding transport (%s/%s) start",
                 label,
                 status,
                 attempts,
                 max_attempts - 1,
             )
-            await remote_app.rebuild()  # type: ignore[attr-defined]
+            try:
+                await asyncio.wait_for(remote_app.rebuild(), timeout=5.0)  # type: ignore[attr-defined]
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "%s rebuild timed out after 5s; falling back to re-initialize",
+                    label,
+                )
+                await remote_app.initialize()
+                return
+            elapsed_ms = (time.monotonic() - start) * 1000
+            logger.warning(
+                "%s rebuild completed in %.0fms",
+                label,
+                elapsed_ms,
+            )
             return
         logger.warning(
             "%s got HTTP %s; re-initializing session (%s/%s)",
@@ -181,9 +196,10 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         detail: str | None = None,
     ) -> None:
         if hasattr(remote_app, "rebuild"):
+            start = time.monotonic()
             if detail:
                 logger.warning(
-                    "%s timed out; rebuilding transport (%s/%s); %s",
+                    "%s timed out; rebuilding transport (%s/%s); %s (start)",
                     label,
                     attempts,
                     max_attempts - 1,
@@ -191,12 +207,26 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 )
             else:
                 logger.warning(
-                    "%s timed out; rebuilding transport (%s/%s)",
+                    "%s timed out; rebuilding transport (%s/%s) start",
                     label,
                     attempts,
                     max_attempts - 1,
                 )
-            await remote_app.rebuild()  # type: ignore[attr-defined]
+            try:
+                await asyncio.wait_for(remote_app.rebuild(), timeout=5.0)  # type: ignore[attr-defined]
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "%s rebuild timed out after 5s; falling back to re-initialize",
+                    label,
+                )
+                await remote_app.initialize()
+                return
+            elapsed_ms = (time.monotonic() - start) * 1000
+            logger.warning(
+                "%s rebuild completed in %.0fms",
+                label,
+                elapsed_ms,
+            )
             return
         if detail:
             logger.warning(
