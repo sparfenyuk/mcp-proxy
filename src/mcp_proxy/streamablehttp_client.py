@@ -5,6 +5,7 @@ import inspect
 import logging
 import os
 import sys
+import time
 from functools import partial
 from typing import Any
 from contextlib import AsyncExitStack
@@ -89,9 +90,15 @@ class _ReconnectableSession:
         self._lock = asyncio.Lock()
 
     async def _open_session(self) -> ClientSession:
+        start = time.monotonic()
+        logger.info("streamablehttp rebuild: opening new transport")
         stack = AsyncExitStack()
+        logger.info("streamablehttp rebuild: entering streamablehttp_client")
         read, write, _ = await stack.enter_async_context(streamablehttp_client(**self._stream_kwargs))
+        logger.info("streamablehttp rebuild: streamablehttp_client entered (%.0fms)", (time.monotonic() - start) * 1000)
+        logger.info("streamablehttp rebuild: entering ClientSession")
         session = await stack.enter_async_context(ClientSession(read, write))
+        logger.info("streamablehttp rebuild: ClientSession entered (%.0fms)", (time.monotonic() - start) * 1000)
         self._stack = stack
         self._session = session
         return session
@@ -113,7 +120,9 @@ class _ReconnectableSession:
 
     async def _close_locked(self) -> None:
         if self._stack is not None:
+            logger.info("streamablehttp rebuild: closing existing transport")
             await self._stack.aclose()
+            logger.info("streamablehttp rebuild: existing transport closed")
         self._stack = None
         self._session = None
 
