@@ -157,8 +157,12 @@ def custom_httpx_client(  # noqa: C901
                 if request_state.get("force_clear_session_id"):
                     logger.info("Cleared MCP session id suppression after receiving new session id")
                 request_state["force_clear_session_id"] = False
+                if request_state.get("force_reinit"):
+                    logger.info("Cleared re-init requirement after receiving new session id")
+                request_state["force_reinit"] = False
             if response.status_code == 404:
                 request_state["force_clear_session_id"] = True
+                request_state["force_reinit"] = True
                 logger.info(
                     "HTTP 404 for %s %s; will clear MCP session id on subsequent requests",
                     response.request.method,

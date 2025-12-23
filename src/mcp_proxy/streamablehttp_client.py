@@ -162,6 +162,23 @@ class _ReconnectableSession:
         self._stack: AsyncExitStack | None = None
         self._lock = asyncio.Lock()
 
+    async def _acquire_lock(self, action: str) -> None:
+        timeout_s = getattr(self, "_reconnect_timeout_s", None)
+        if self._lock.locked():
+            logger.warning("streamablehttp %s waiting for lock", action)
+        if timeout_s:
+            try:
+                await asyncio.wait_for(self._lock.acquire(), timeout=timeout_s)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "streamablehttp %s timed out waiting for lock after %.1fs",
+                    action,
+                    timeout_s,
+                )
+                raise
+        else:
+            await self._lock.acquire()
+
     async def _open_session(self) -> ClientSession:
         start = time.monotonic()
         logger.info("streamablehttp rebuild: opening new transport")
@@ -184,15 +201,19 @@ class _ReconnectableSession:
 
     async def open(self) -> ClientSession:
         logger.info("streamablehttp rebuild: open requested")
-        async with self._lock:
+        await self._acquire_lock("open")
+        try:
             logger.info("streamablehttp rebuild: open lock acquired")
             if self._session is None:
                 return await self._open_session()
             return self._session
+        finally:
+            self._lock.release()
 
     async def rebuild(self) -> ClientSession:
         logger.info("streamablehttp rebuild: rebuild requested")
-        async with self._lock:
+        await self._acquire_lock("rebuild")
+        try:
             logger.info("streamablehttp rebuild: rebuild lock acquired")
             await self._close_locked()
             logger.info("streamablehttp rebuild: opening new transport (rebuild)")
@@ -207,10 +228,15 @@ class _ReconnectableSession:
                     )
                     raise
             return await self._open_session()
+        finally:
+            self._lock.release()
 
     async def close(self) -> None:
-        async with self._lock:
+        await self._acquire_lock("close")
+        try:
             await self._close_locked()
+        finally:
+            self._lock.release()
 
     async def _close_locked(self) -> None:
         if self._stack is not None:

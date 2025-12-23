@@ -243,6 +243,14 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
             logger.debug("%s completed; %s", label, detail)
         return result
 
+    async def _maybe_force_reinit(label: str) -> None:
+        if not isinstance(request_state, dict):
+            return
+        if not request_state.get("force_reinit"):
+            return
+        logger.warning("%s forcing initialize due to prior 404", label)
+        await _await_remote_call(remote_app.initialize, label=f"{label} initialize")
+
     def _should_rebuild_session(status: int | None) -> bool:
         return status == 404
 
@@ -402,6 +410,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         while True:
             try:
                 async with semaphore:
+                    await _maybe_force_reinit(label)
                     return await _await_remote_call(call, label=label)
             except httpx.HTTPStatusError as exc:
                 attempts += 1
@@ -453,6 +462,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
     async def _call_remote_once(label: str, call: t.Callable[[], t.Awaitable[t.Any]]) -> t.Any:
         async with semaphore:
+            await _maybe_force_reinit(label)
             return await _await_remote_call(call, label=label)
 
     logger.debug("Configuring proxied MCP server...")
