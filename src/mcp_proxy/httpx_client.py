@@ -134,6 +134,18 @@ def custom_httpx_client(  # noqa: C901
                 request_state["last_get_status"] = response.status_code
                 request_state["last_get_url"] = str(response.request.url)
                 request_state["last_get_session_id"] = response.request.headers.get("mcp-session-id")
+            session_id = response.headers.get("mcp-session-id")
+            if session_id:
+                prev_session_id = request_state.get("last_session_id")
+                if prev_session_id and prev_session_id != session_id:
+                    logger.info(
+                        "MCP session id changed: %s -> %s (from %s %s)",
+                        prev_session_id,
+                        session_id,
+                        response.request.method,
+                        response.request.url,
+                    )
+                request_state["last_session_id"] = session_id
 
         # Treat any 4xx and 503 as retryable to trigger outer reconnect/re-init logic.
         status = response.status_code

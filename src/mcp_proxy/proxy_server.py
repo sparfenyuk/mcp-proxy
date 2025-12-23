@@ -38,8 +38,10 @@ def _iter_exceptions(exc: BaseException) -> t.Iterator[BaseException]:
 
 async def create_proxy_server(remote_app: ClientSession) -> server.Server[object]:  # noqa: C901, PLR0915
     """Create a server instance from a remote app."""
-    logger.debug("Sending initialization request to remote MCP server...")
+    logger.info("Initialize start")
+    init_start = time.monotonic()
     response = await remote_app.initialize()
+    logger.info("Initialize completed in %.0fms", (time.monotonic() - init_start) * 1000)
     capabilities = response.capabilities
 
     max_attempts = getattr(remote_app, "_retry_attempts", 0)
@@ -103,11 +105,67 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
             return None
         return f"session={session_id}"
 
+    def _describe_last_sent() -> str | None:
+        if not isinstance(request_state, dict):
+            return None
+        ts = request_state.get("last_sent_ts")
+        if ts is None:
+            return None
+        age_s = time.monotonic() - ts
+        method = request_state.get("last_sent_method")
+        request_id = request_state.get("last_sent_id")
+        if method or request_id is not None:
+            return f"last sent {method or '?'} id={request_id} ({age_s:.1f}s ago)"
+        return f"last sent ({age_s:.1f}s ago)"
+
+    def _describe_last_sse() -> str | None:
+        if not isinstance(request_state, dict):
+            return None
+        ts = request_state.get("last_sse_ts")
+        if ts is None:
+            return None
+        age_s = time.monotonic() - ts
+        sse_id = request_state.get("last_sse_id")
+        if sse_id is not None:
+            return f"last SSE id={sse_id} ({age_s:.1f}s ago)"
+        return f"last SSE ({age_s:.1f}s ago)"
+
+    def _describe_sse_state() -> str | None:
+        if not isinstance(request_state, dict):
+            return None
+        parts: list[str] = []
+        connect_ts = request_state.get("last_sse_connect_ts")
+        if connect_ts is not None:
+            parts.append(f"SSE connect {(time.monotonic() - connect_ts):.1f}s ago")
+        disconnect_ts = request_state.get("last_sse_disconnect_ts")
+        if disconnect_ts is not None:
+            parts.append(f"SSE disconnect {(time.monotonic() - disconnect_ts):.1f}s ago")
+        disconnect_count = request_state.get("sse_disconnect_count")
+        if disconnect_count is not None:
+            parts.append(f"SSE disconnects={disconnect_count}")
+        error_ts = request_state.get("last_sse_error_ts")
+        if error_ts is not None:
+            parts.append(f"SSE error {(time.monotonic() - error_ts):.1f}s ago")
+        reconnect_max = request_state.get("last_sse_reconnect_max")
+        if reconnect_max is not None:
+            parts.append(f"SSE reconnect max={reconnect_max}")
+        reconnect_exhausted_ts = request_state.get("last_sse_reconnect_exhausted_ts")
+        if reconnect_exhausted_ts is not None:
+            parts.append(
+                f"SSE reconnect exhausted {(time.monotonic() - reconnect_exhausted_ts):.1f}s ago"
+            )
+        if not parts:
+            return None
+        return "; ".join(parts)
+
     def _describe_call_context() -> str | None:
         parts = [
             _describe_last_session(),
             _describe_last_post(),
             _describe_last_get(),
+            _describe_last_sent(),
+            _describe_last_sse(),
+            _describe_sse_state(),
         ]
         details = "; ".join(part for part in parts if part)
         return details or None
@@ -179,7 +237,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         if queue_task is not None:
             await _cancel_task(queue_task)
 
-        return call_task.result()
+        result = call_task.result()
+        detail = _describe_call_context()
+        if detail:
+            logger.debug("%s completed; %s", label, detail)
+        return result
 
     def _should_rebuild_session(status: int | None) -> bool:
         return status == 404
@@ -210,11 +272,20 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 await remote_app.initialize()
                 return
             elapsed_ms = (time.monotonic() - start) * 1000
-            logger.warning(
-                "%s rebuild completed in %.0fms",
-                label,
-                elapsed_ms,
-            )
+            detail = _describe_call_context()
+            if detail:
+                logger.warning(
+                    "%s rebuild completed in %.0fms; %s",
+                    label,
+                    elapsed_ms,
+                    detail,
+                )
+            else:
+                logger.warning(
+                    "%s rebuild completed in %.0fms",
+                    label,
+                    elapsed_ms,
+                )
             return
         logger.warning(
             "%s got HTTP %s; re-initializing session (%s/%s)",
@@ -259,11 +330,20 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 await remote_app.initialize()
                 return
             elapsed_ms = (time.monotonic() - start) * 1000
-            logger.warning(
-                "%s rebuild completed in %.0fms",
-                label,
-                elapsed_ms,
-            )
+            detail2 = _describe_call_context()
+            if detail2:
+                logger.warning(
+                    "%s rebuild completed in %.0fms; %s",
+                    label,
+                    elapsed_ms,
+                    detail2,
+                )
+            else:
+                logger.warning(
+                    "%s rebuild completed in %.0fms",
+                    label,
+                    elapsed_ms,
+                )
             return
         if detail:
             logger.warning(

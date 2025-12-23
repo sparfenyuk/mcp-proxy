@@ -4,11 +4,12 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 import sys
 import time
+from contextlib import AsyncExitStack
 from functools import partial
 from typing import Any
-from contextlib import AsyncExitStack
 
 import httpx
 from mcp.client.session import ClientSession
@@ -19,6 +20,10 @@ from .httpx_client import custom_httpx_client
 from .proxy_server import create_proxy_server
 
 logger = logging.getLogger(__name__)
+_STREAM_LOGGER_NAME = "mcp.client.streamable_http"
+_JSONRPC_ID_RE = re.compile(r"id=(\d+)")
+_JSONRPC_METHOD_RE = re.compile(r"JSONRPCRequest\(method='([^']+)'")
+_RECONNECT_ATTEMPTS_RE = re.compile(r"max reconnection attempts \\((\\d+)\\)")
 
 try:
     _BaseExceptionGroup: type[BaseException] | tuple[type[BaseException], ...] = BaseExceptionGroup  # type: ignore[name-defined]
@@ -90,6 +95,58 @@ def _parse_reconnect_timeout_s() -> float:
     if value <= 0:
         return 5.0
     return value
+
+
+class _StreamableHttpTelemetryHandler(logging.Handler):
+    def __init__(self, request_state: dict[str, Any]) -> None:
+        super().__init__()
+        self._request_state = request_state
+
+    def emit(self, record: logging.LogRecord) -> None:  # noqa: D401
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001
+            return
+
+        now = time.monotonic()
+
+        if "Sending client message:" in message and "JSONRPCRequest" in message:
+            method_match = _JSONRPC_METHOD_RE.search(message)
+            id_match = _JSONRPC_ID_RE.search(message)
+            if method_match:
+                self._request_state["last_sent_method"] = method_match.group(1)
+            if id_match:
+                self._request_state["last_sent_id"] = int(id_match.group(1))
+            self._request_state["last_sent_ts"] = now
+            return
+
+        if "SSE message:" in message:
+            id_match = _JSONRPC_ID_RE.search(message)
+            if id_match:
+                self._request_state["last_sse_id"] = int(id_match.group(1))
+            self._request_state["last_sse_ts"] = now
+            return
+
+        if "GET SSE connection established" in message:
+            self._request_state["last_sse_connect_ts"] = now
+            return
+
+        if "GET stream disconnected" in message:
+            self._request_state["last_sse_disconnect_ts"] = now
+            self._request_state["last_sse_disconnect_msg"] = message
+            self._request_state["sse_disconnect_count"] = (
+                self._request_state.get("sse_disconnect_count", 0) + 1
+            )
+            return
+
+        if "GET stream error:" in message:
+            self._request_state["last_sse_error_ts"] = now
+            self._request_state["last_sse_error_msg"] = message
+            if "max reconnection attempts" in message:
+                match = _RECONNECT_ATTEMPTS_RE.search(message)
+                if match:
+                    self._request_state["last_sse_reconnect_max"] = int(match.group(1))
+                self._request_state["last_sse_reconnect_exhausted_ts"] = now
 
 
 class _ReconnectableSession:
@@ -207,6 +264,9 @@ async def run_streamablehttp_client(
 
         try:
             request_state: dict[str, Any] = {}
+            stream_logger = logging.getLogger(_STREAM_LOGGER_NAME)
+            telemetry_handler = _StreamableHttpTelemetryHandler(request_state)
+            stream_logger.addHandler(telemetry_handler)
             stream_kwargs: dict[str, Any] = {
                 "url": url,
                 "headers": headers,
@@ -247,8 +307,8 @@ async def run_streamablehttp_client(
             reconnectable._http_error_queue = error_queue  # type: ignore[attr-defined]
             reconnectable._proxy_call_timeout_s = call_timeout_s  # type: ignore[attr-defined]
             reconnectable._http_request_state = request_state  # type: ignore[attr-defined]
-            app = await create_proxy_server(reconnectable)
             try:
+                app = await create_proxy_server(reconnectable)
                 async with stdio_server() as (read_stream, write_stream):
                     await app.run(
                         read_stream,
@@ -261,6 +321,7 @@ async def run_streamablehttp_client(
                     return
                 raise
             finally:
+                stream_logger.removeHandler(telemetry_handler)
                 await reconnectable.close()
             return
         except asyncio.CancelledError as exc:
