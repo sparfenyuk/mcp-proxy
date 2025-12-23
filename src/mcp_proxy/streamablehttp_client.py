@@ -78,13 +78,29 @@ def _parse_call_timeout_s() -> float | None:
     return value
 
 
+def _parse_reconnect_timeout_s() -> float:
+    raw = os.getenv("MCP_PROXY_RECONNECT_TIMEOUT_S")
+    if raw is None:
+        return 5.0
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid MCP_PROXY_RECONNECT_TIMEOUT_S=%s; using default 5s", raw)
+        return 5.0
+    if value <= 0:
+        return 5.0
+    return value
+
+
 class _ReconnectableSession:
     def __init__(
         self,
         *,
         stream_kwargs: dict[str, Any],
+        reconnect_timeout_s: float,
     ) -> None:
         self._stream_kwargs = stream_kwargs
+        self._reconnect_timeout_s = reconnect_timeout_s
         self._session: ClientSession | None = None
         self._stack: AsyncExitStack | None = None
         self._lock = asyncio.Lock()
@@ -94,10 +110,16 @@ class _ReconnectableSession:
         logger.info("streamablehttp rebuild: opening new transport")
         stack = AsyncExitStack()
         logger.info("streamablehttp rebuild: entering streamablehttp_client")
-        read, write, _ = await stack.enter_async_context(streamablehttp_client(**self._stream_kwargs))
+        read, write, _ = await asyncio.wait_for(
+            stack.enter_async_context(streamablehttp_client(**self._stream_kwargs)),
+            timeout=self._reconnect_timeout_s,
+        )
         logger.info("streamablehttp rebuild: streamablehttp_client entered (%.0fms)", (time.monotonic() - start) * 1000)
         logger.info("streamablehttp rebuild: entering ClientSession")
-        session = await stack.enter_async_context(ClientSession(read, write))
+        session = await asyncio.wait_for(
+            stack.enter_async_context(ClientSession(read, write)),
+            timeout=self._reconnect_timeout_s,
+        )
         logger.info("streamablehttp rebuild: ClientSession entered (%.0fms)", (time.monotonic() - start) * 1000)
         self._stack = stack
         self._session = session
@@ -157,6 +179,7 @@ async def run_streamablehttp_client(
     max_attempts = 1 + max(0, retry_attempts)
     error_queue: asyncio.Queue[httpx.HTTPStatusError] = asyncio.Queue(maxsize=32)
     call_timeout_s = _parse_call_timeout_s()
+    reconnect_timeout_s = _parse_reconnect_timeout_s()
     if call_timeout_s is None:
         logger.info("Per-call timeout disabled (MCP_PROXY_CALL_TIMEOUT_S<=0); retries depend on other errors")
     else:
@@ -166,6 +189,10 @@ async def run_streamablehttp_client(
             retry_attempts,
             url,
         )
+    logger.info(
+        "Reconnect timeout set to %.1fs (MCP_PROXY_RECONNECT_TIMEOUT_S)",
+        reconnect_timeout_s,
+    )
 
     while attempts < max_attempts:
         # If our stdio is already closed, there's nothing useful we can do.
@@ -205,7 +232,10 @@ async def run_streamablehttp_client(
                 # If the callable is not introspectable, don't pass optional kwargs.
                 pass
 
-            reconnectable = _ReconnectableSession(stream_kwargs=stream_kwargs)
+            reconnectable = _ReconnectableSession(
+                stream_kwargs=stream_kwargs,
+                reconnect_timeout_s=reconnect_timeout_s,
+            )
             # Ensure the initial transport/session is created so retries behave as expected.
             await reconnectable.open()
             # propagate retry budget to downstream handlers (used in CallTool wrapper)
