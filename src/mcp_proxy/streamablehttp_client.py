@@ -195,6 +195,17 @@ class _ReconnectableSession:
         async with self._lock:
             logger.info("streamablehttp rebuild: rebuild lock acquired")
             await self._close_locked()
+            logger.info("streamablehttp rebuild: opening new transport (rebuild)")
+            timeout_s = getattr(self, "_reconnect_timeout_s", None)
+            if timeout_s:
+                try:
+                    return await asyncio.wait_for(self._open_session(), timeout=timeout_s)
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "streamablehttp rebuild: opening new transport timed out after %.1fs",
+                        timeout_s,
+                    )
+                    raise
             return await self._open_session()
 
     async def close(self) -> None:
@@ -302,6 +313,7 @@ async def run_streamablehttp_client(
             )
             # Ensure the initial transport/session is created so retries behave as expected.
             await reconnectable.open()
+            reconnectable._reconnect_timeout_s = reconnect_timeout_s  # type: ignore[attr-defined]
             # propagate retry budget to downstream handlers (used in CallTool wrapper)
             reconnectable._retry_attempts = retry_attempts  # type: ignore[attr-defined]
             reconnectable._http_error_queue = error_queue  # type: ignore[attr-defined]
