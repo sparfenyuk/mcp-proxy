@@ -144,6 +144,15 @@ async def run_streamablehttp_client(
     max_attempts = 1 + max(0, retry_attempts)
     error_queue: asyncio.Queue[httpx.HTTPStatusError] = asyncio.Queue(maxsize=32)
     call_timeout_s = _parse_call_timeout_s()
+    if call_timeout_s is None:
+        logger.info("Per-call timeout disabled (MCP_PROXY_CALL_TIMEOUT_S<=0); retries depend on other errors")
+    else:
+        logger.info(
+            "Per-call timeout set to %.1fs (MCP_PROXY_CALL_TIMEOUT_S); retry attempts=%s; url=%s",
+            call_timeout_s,
+            retry_attempts,
+            url,
+        )
 
     while attempts < max_attempts:
         # If our stdio is already closed, there's nothing useful we can do.
