@@ -543,6 +543,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         async def _call_tool(req: types.CallToolRequest) -> types.ServerResult:
             attempts = 0
             backoff_s = 0.5
+            logger.info("CallTool request received; name=%s", req.params.name)
 
             def _retryable_status_in_error(err: BaseException) -> int | None:
                 for leaf in _iter_exceptions(err):
