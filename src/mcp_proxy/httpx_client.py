@@ -86,6 +86,14 @@ def custom_httpx_client(  # noqa: C901
     # Add logging event hooks
     async def log_request(request: httpx.Request) -> None:
         """Log HTTP request details."""
+        if request_state is not None and request_state.get("force_clear_session_id"):
+            if "mcp-session-id" in request.headers:
+                logger.info(
+                    "Clearing MCP session id on outbound request due to prior 404 (method=%s url=%s)",
+                    request.method,
+                    request.url,
+                )
+                request.headers.pop("mcp-session-id", None)
         logger.info(
             "HTTP Request: %s %s",
             request.method,
@@ -146,6 +154,16 @@ def custom_httpx_client(  # noqa: C901
                         response.request.url,
                     )
                 request_state["last_session_id"] = session_id
+                if request_state.get("force_clear_session_id"):
+                    logger.info("Cleared MCP session id suppression after receiving new session id")
+                request_state["force_clear_session_id"] = False
+            if response.status_code == 404:
+                request_state["force_clear_session_id"] = True
+                logger.info(
+                    "HTTP 404 for %s %s; will clear MCP session id on subsequent requests",
+                    response.request.method,
+                    response.request.url,
+                )
 
         # Treat any 4xx and 503 as retryable to trigger outer reconnect/re-init logic.
         status = response.status_code
