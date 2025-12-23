@@ -121,8 +121,12 @@ class _ReconnectableSession:
     async def _close_locked(self) -> None:
         if self._stack is not None:
             logger.info("streamablehttp rebuild: closing existing transport")
-            await self._stack.aclose()
-            logger.info("streamablehttp rebuild: existing transport closed")
+            close_start = time.monotonic()
+            try:
+                await self._stack.aclose()
+            finally:
+                elapsed_ms = (time.monotonic() - close_start) * 1000
+                logger.info("streamablehttp rebuild: existing transport close returned (%.0fms)", elapsed_ms)
         self._stack = None
         self._session = None
 
