@@ -15,8 +15,9 @@ Purpose: capture the work needed so future agents can make mcp-proxy recover and
 - [ ] Normalize and log the exact upstream URL used (including trailing slash handling) so 404s point to a real path mismatch.
 - [x] When upstream returns non-200/202 or the session dies (`32600 Session terminated`), attempt one re-init; if that fails, return a richer error to the client.
 - [x] Surface send-path HTTP errors (e.g., 404 on POST) via an error queue so retries can re-init the session instead of silently timing out.
-- [ ] Improve logging/messages surfaced to clients: include status code, upstream URL, and suggestion to check backend health/path/auth.
-- [x] Tests: added coverage for retryable 404s, send-path errors, call timeouts, and retry-budget guard. Connection-reset coverage still TODO.
+- [x] On HTTP 404 after idle, re-initialize the session first (clearing `MCP-Session-Id`), and only rebuild the transport if re-init fails; add test coverage for idle 404 + rebuild fallback.
+- [x] Improve logging/messages surfaced to clients: include status code, upstream URL, and suggestion to check backend health/path/auth.
+- [x] Tests: added coverage for retryable 404s, send-path errors, call timeouts, retry-budget guard, and connection-reset retry.
 
 ## Open decisions
 - (Decided) Surface guidance in logs only; keep MCP error payload minimal/standard to avoid leaks and client incompatibility.

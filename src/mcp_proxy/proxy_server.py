@@ -170,6 +170,44 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         details = "; ".join(part for part in parts if part)
         return details or None
 
+    def _extract_status_url(exc: BaseException) -> tuple[int | None, str | None]:
+        status = None
+        url = None
+        for leaf in _iter_exceptions(exc):
+            if isinstance(leaf, httpx.HTTPStatusError):
+                status = leaf.response.status_code if leaf.response else None
+                if leaf.request:
+                    url = str(leaf.request.url)
+                break
+        if url is None and isinstance(request_state, dict):
+            url = (
+                request_state.get("last_request_url")
+                or request_state.get("last_post_url")
+                or request_state.get("last_get_url")
+            )
+        return status, url
+
+    def _format_upstream_error(label: str, exc: BaseException) -> str:
+        status, url = _extract_status_url(exc)
+        parts = [f"{label} failed talking to upstream MCP server"]
+        if status is not None:
+            parts.append(f"(HTTP {status})")
+        if url:
+            parts.append(f"url={url}")
+        message = " ".join(parts).strip()
+        hints: list[str] = []
+        if status == 404:
+            hints.append("Session likely expired or path mismatch; verify /mcp endpoint and retry.")
+        elif status in {401, 403}:
+            hints.append("Auth rejected; verify tokens/headers.")
+        elif isinstance(exc, (httpx.TimeoutException, TimeoutError)):
+            hints.append("Request timed out; check upstream health or network.")
+        elif isinstance(exc, httpx.NetworkError):
+            hints.append("Network error; check upstream availability.")
+        else:
+            hints.append("Check upstream health, /mcp path, and auth.")
+        return f"{message} {' '.join(hints)}".strip()
+
     async def _await_remote_call(
         call: t.Callable[[], t.Awaitable[t.Any]],
         *,
@@ -261,6 +299,23 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         attempts: int,
         max_attempts: int,
     ) -> None:
+        if status == 404:
+            logger.warning(
+                "%s got HTTP 404; re-initializing session (%s/%s) before rebuild",
+                label,
+                attempts,
+                max_attempts - 1,
+            )
+            try:
+                await _await_remote_call(remote_app.initialize, label=f"{label} initialize")
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "%s re-initialize after 404 failed; falling back to transport rebuild; error=%s",
+                    label,
+                    exc,
+                )
+
         if _should_rebuild_session(status) and hasattr(remote_app, "rebuild"):
             start = time.monotonic()
             logger.warning(
@@ -295,6 +350,8 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     label,
                     elapsed_ms,
                 )
+            if status == 404:
+                await _await_remote_call(remote_app.initialize, label=f"{label} initialize after rebuild")
             return
         logger.warning(
             "%s got HTTP %s; re-initializing session (%s/%s)",
@@ -664,9 +721,10 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                             continue
                         raise
             except Exception as e:  # noqa: BLE001
+                error_text = _format_upstream_error(f"CallTool {req.params.name}", e)
                 return types.ServerResult(
                     types.CallToolResult(
-                        content=[types.TextContent(type="text", text=str(e))],
+                        content=[types.TextContent(type="text", text=error_text)],
                         isError=True,
                     ),
                 )
