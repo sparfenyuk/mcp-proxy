@@ -336,6 +336,59 @@ class _Idle404RemoteApp:
         return types.CallToolResult(content=[], isError=False)
 
 
+class _ReinitTimeoutRemoteApp:
+    """Stub remote client that stalls re-init, forcing a rebuild fallback."""
+
+    def __init__(self, *, retry_attempts: int = 1, reinit_timeout_s: float = 0.05):
+        self._retry_attempts = retry_attempts
+        self._proxy_reinit_timeout_s = reinit_timeout_s
+        self.call_count = 0
+        self.init_count = 0
+        self.rebuild_count = 0
+        self.rebuilt = False
+        self._stall_reinit = True
+
+    async def initialize(self):
+        self.init_count += 1
+        if self._stall_reinit and self.init_count > 1:
+            self._stall_reinit = False
+            await asyncio.Event().wait()
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def rebuild(self):
+        self.rebuild_count += 1
+        self.rebuilt = True
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if not self.rebuilt:
+            request = httpx.Request("POST", "http://example.test/mcp")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("Session not found", request=request, response=response)
+        return types.CallToolResult(content=[], isError=False)
+
+
 class _RetryRemoteResourcesApp:
     """Stub remote client exposing resources, failing once then succeeding."""
 
@@ -1252,4 +1305,29 @@ async def test_proxy_call_tool_reinitializes_after_idle_404() -> None:
     assert remote.rebuild_count == 0
     assert remote.call_count == 2
     assert remote.init_count == 2
+    #endregion Assert
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_rebuilds_after_reinit_timeout() -> None:
+    #region Arrange
+    remote = _ReinitTimeoutRemoteApp(retry_attempts=1, reinit_timeout_s=0.05)
+    app = await create_proxy_server(remote)
+    #endregion Arrange
+
+    #region Initial Assert
+    assert remote.init_count == 1
+    assert remote.rebuild_count == 0
+    #endregion Initial Assert
+
+    #region Act
+    async with create_connected_server_and_client_session(app) as session:
+        result = await session.call_tool("tool", {})
+    #endregion Act
+
+    #region Assert
+    assert not result.isError
+    assert remote.rebuild_count == 1
+    assert remote.call_count == 2
+    assert remote.init_count == 3
     #endregion Assert

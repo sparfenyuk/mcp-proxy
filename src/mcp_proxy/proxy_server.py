@@ -56,6 +56,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
     error_queue = getattr(remote_app, "_http_error_queue", None)
     request_state = getattr(remote_app, "_http_request_state", None)
     call_timeout_s = getattr(remote_app, "_proxy_call_timeout_s", None)
+    reinit_timeout_s = getattr(remote_app, "_proxy_reinit_timeout_s", None)
 
     async def _drain_error_queue() -> None:
         if error_queue is None:
@@ -68,6 +69,10 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
     async def _cancel_task(task: asyncio.Task[t.Any]) -> None:
         if task.done():
+            try:
+                task.result()
+            except Exception:  # noqa: BLE001
+                return
             return
         task.cancel()
         try:
@@ -212,15 +217,17 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         call: t.Callable[[], t.Awaitable[t.Any]],
         *,
         label: str,
+        timeout_s: float | None = None,
     ) -> t.Any:
-        if call_timeout_s is not None:
-            logger.debug("%s starting call; timeout=%.1fs", label, call_timeout_s)
+        effective_timeout = call_timeout_s if timeout_s is None else timeout_s
+        if effective_timeout is not None:
+            logger.debug("%s starting call; timeout=%.1fs", label, effective_timeout)
         await _drain_error_queue()
 
         async def _run() -> t.Any:
             return await call()
 
-        if error_queue is None and call_timeout_s is None:
+        if error_queue is None and effective_timeout is None:
             return await _run()
 
         call_task = asyncio.create_task(_run())
@@ -234,7 +241,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
         done, pending = await asyncio.wait(
             tasks,
-            timeout=call_timeout_s,
+            timeout=effective_timeout,
             return_when=asyncio.FIRST_COMPLETED,
         )
 
@@ -247,16 +254,16 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 logger.warning(
                     "%s timed out after %ss awaiting response; %s; possible SSE stall",
                     label,
-                    call_timeout_s,
+                    effective_timeout,
                     detail,
                 )
             else:
                 logger.warning(
                     "%s timed out after %ss awaiting response",
                     label,
-                    call_timeout_s,
+                    effective_timeout,
                 )
-            raise TimeoutError(f"{label} timed out after {call_timeout_s}s")
+            raise TimeoutError(f"{label} timed out after {effective_timeout}s")
 
         if queue_task is not None and queue_task in done:
             err = queue_task.result()
@@ -287,7 +294,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         if not request_state.get("force_reinit"):
             return
         logger.warning("%s forcing initialize due to prior 404", label)
-        await _await_remote_call(remote_app.initialize, label=f"{label} initialize")
+        await _await_remote_call(
+            remote_app.initialize,
+            label=f"{label} initialize",
+            timeout_s=reinit_timeout_s,
+        )
 
     def _should_rebuild_session(status: int | None) -> bool:
         return status == 404
@@ -307,7 +318,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 max_attempts - 1,
             )
             try:
-                await _await_remote_call(remote_app.initialize, label=f"{label} initialize")
+                await _await_remote_call(
+                    remote_app.initialize,
+                    label=f"{label} initialize",
+                    timeout_s=reinit_timeout_s,
+                )
                 return
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
@@ -333,7 +348,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     "%s rebuild timed out after 5s; falling back to re-initialize",
                     label,
                 )
-                await remote_app.initialize()
+                await _await_remote_call(
+                    remote_app.initialize,
+                    label=f"{label} initialize",
+                    timeout_s=reinit_timeout_s,
+                )
                 return
             elapsed_ms = (time.monotonic() - start) * 1000
             detail = _describe_call_context()
@@ -351,7 +370,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     elapsed_ms,
                 )
             if status == 404:
-                await _await_remote_call(remote_app.initialize, label=f"{label} initialize after rebuild")
+                await _await_remote_call(
+                    remote_app.initialize,
+                    label=f"{label} initialize after rebuild",
+                    timeout_s=reinit_timeout_s,
+                )
             return
         logger.warning(
             "%s got HTTP %s; re-initializing session (%s/%s)",
@@ -360,7 +383,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
             attempts,
             max_attempts - 1,
         )
-        await remote_app.initialize()
+        await _await_remote_call(
+            remote_app.initialize,
+            label=f"{label} initialize",
+            timeout_s=reinit_timeout_s,
+        )
 
     async def _rebuild_or_initialize_timeout(
         label: str,
@@ -394,7 +421,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     "%s rebuild timed out after 5s; falling back to re-initialize",
                     label,
                 )
-                await remote_app.initialize()
+                await _await_remote_call(
+                    remote_app.initialize,
+                    label=f"{label} initialize",
+                    timeout_s=reinit_timeout_s,
+                )
                 return
             elapsed_ms = (time.monotonic() - start) * 1000
             detail2 = _describe_call_context()
@@ -427,7 +458,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 attempts,
                 max_attempts - 1,
             )
-        await remote_app.initialize()
+        await _await_remote_call(
+            remote_app.initialize,
+            label=f"{label} initialize",
+            timeout_s=reinit_timeout_s,
+        )
 
     def _is_retryable_status(status: int | None) -> bool:
         if status is None:
@@ -509,7 +544,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                         attempts,
                         max_attempts - 1,
                     )
-                    await remote_app.initialize()
+                    await _await_remote_call(
+                        remote_app.initialize,
+                        label=f"{label} initialize",
+                        timeout_s=reinit_timeout_s,
+                    )
                     sleep_s = _retry_sleep_for(None, session_error=True) or backoff_s
                     if sleep_s:
                         await asyncio.sleep(sleep_s)
@@ -650,7 +689,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                                 attempts,
                                 max_attempts - 1,
                             )
-                            await remote_app.initialize()
+                            await _await_remote_call(
+                                remote_app.initialize,
+                                label=f"CallTool {req.params.name} initialize",
+                                timeout_s=reinit_timeout_s,
+                            )
                             await asyncio.sleep(backoff_s)
                             backoff_s = min(5.0, backoff_s * 2)
                             continue
@@ -713,7 +756,11 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                                 attempts,
                                 max_attempts - 1,
                             )
-                            await remote_app.initialize()
+                            await _await_remote_call(
+                                remote_app.initialize,
+                                label=f"CallTool {req.params.name} initialize",
+                                timeout_s=reinit_timeout_s,
+                            )
                             sleep_s = _retry_sleep_for(None, session_error=True) or backoff_s
                             if sleep_s:
                                 await asyncio.sleep(sleep_s)

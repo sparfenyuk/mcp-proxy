@@ -83,6 +83,20 @@ def _parse_call_timeout_s() -> float | None:
     return value
 
 
+def _parse_reinit_timeout_s() -> float | None:
+    raw = os.getenv("MCP_PROXY_REINIT_TIMEOUT_S")
+    if raw is None:
+        return 5.0
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("Invalid MCP_PROXY_REINIT_TIMEOUT_S=%s; using default 5s", raw)
+        return 5.0
+    if value <= 0:
+        return None
+    return value
+
+
 def _parse_reconnect_timeout_s() -> float:
     raw = os.getenv("MCP_PROXY_RECONNECT_TIMEOUT_S")
     if raw is None:
@@ -277,6 +291,7 @@ async def run_streamablehttp_client(
     max_attempts = 1 + max(0, retry_attempts)
     error_queue: asyncio.Queue[httpx.HTTPStatusError] = asyncio.Queue(maxsize=32)
     call_timeout_s = _parse_call_timeout_s()
+    reinit_timeout_s = _parse_reinit_timeout_s()
     reconnect_timeout_s = _parse_reconnect_timeout_s()
     if call_timeout_s is None:
         logger.info("Per-call timeout disabled (MCP_PROXY_CALL_TIMEOUT_S<=0); retries depend on other errors")
@@ -285,6 +300,14 @@ async def run_streamablehttp_client(
             "Per-call timeout set to %.1fs (MCP_PROXY_CALL_TIMEOUT_S); retry attempts=%s; url=%s",
             call_timeout_s,
             retry_attempts,
+            url,
+        )
+    if reinit_timeout_s is None:
+        logger.info("Re-init timeout disabled (MCP_PROXY_REINIT_TIMEOUT_S<=0); using per-call timeout")
+    else:
+        logger.info(
+            "Re-init timeout set to %.1fs (MCP_PROXY_REINIT_TIMEOUT_S); url=%s",
+            reinit_timeout_s,
             url,
         )
     logger.info(
@@ -344,6 +367,7 @@ async def run_streamablehttp_client(
             reconnectable._retry_attempts = retry_attempts  # type: ignore[attr-defined]
             reconnectable._http_error_queue = error_queue  # type: ignore[attr-defined]
             reconnectable._proxy_call_timeout_s = call_timeout_s  # type: ignore[attr-defined]
+            reconnectable._proxy_reinit_timeout_s = reinit_timeout_s  # type: ignore[attr-defined]
             reconnectable._http_request_state = request_state  # type: ignore[attr-defined]
             try:
                 app = await create_proxy_server(reconnectable)

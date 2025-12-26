@@ -162,6 +162,40 @@ async def test_streamable_exits_cleanly_when_stdio_server_raises_closed_file(
 
 
 @pytest.mark.asyncio
+async def test_streamable_exits_cleanly_when_app_run_raises_closed_file(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """App.run raising `I/O operation on closed file` should exit without retries."""
+    @asynccontextmanager
+    async def _ok_cm(*_: Any, **__: Any) -> AsyncIterator[tuple[Any, Any, Any]]:
+        yield ("r", "w", None)
+
+    class _ClosedRunApp:
+        async def run(self, *_: Any, **__: Any) -> None:
+            raise ValueError("I/O operation on closed file")
+
+        def create_initialization_options(self) -> None:
+            return None
+
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.streamablehttp_client", _ok_cm)
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.create_proxy_server", AsyncMock(return_value=_ClosedRunApp()))
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.ClientSession", dummy_client_session)
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.stdio_server", dummy_stdio_server)
+    sleep = AsyncMock()
+    monkeypatch.setattr("mcp_proxy.streamablehttp_client.asyncio.sleep", sleep)
+
+    await run_streamablehttp_client(
+        url="http://example/mcp",
+        headers=None,
+        auth=None,
+        verify_ssl=None,
+        retry_attempts=6,
+    )
+
+    sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_streamable_retry_succeeds_after_one_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     """Should retry and succeed on second attempt when enabled."""
     monkeypatch.setattr("mcp_proxy.streamablehttp_client.streamablehttp_client", make_fail_then_success_cm())
