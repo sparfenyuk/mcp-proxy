@@ -45,6 +45,25 @@ def test_verify_ssl_cli_no_verify_alias(parser: ArgumentParser) -> None:
     assert _normalize_verify_ssl(args.verify_ssl) is False
 
 
+def test_retry_remote_default_off(parser: ArgumentParser) -> None:
+    """Retry is opt-in; defaults to False."""
+    args = parser.parse_args(["https://example.com"])
+    assert args.retry_remote is False
+
+
+def test_retry_remote_flag_on(parser: ArgumentParser) -> None:
+    """Retry flag enables single retry."""
+    args = parser.parse_args(["--retry-remote", "https://example.com"])
+    assert args.retry_remote is True
+
+
+def test_remote_retries_count(parser: ArgumentParser) -> None:
+    """Explicit retry count parsed correctly."""
+    args = parser.parse_args(["--remote-retries", "3", "https://example.com"])
+    assert args.remote_retries == 3
+    assert args.retry_remote is False  # independent of count flag
+
+
 @patch("mcp_proxy.httpx_client.httpx.AsyncClient")
 def test_custom_httpx_client_disable_ssl(mock_async_client: Mock) -> None:
     """custom_httpx_client passes verify=False to httpx when disabled."""
