@@ -23,6 +23,7 @@ from mcp.shared.exceptions import McpError
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import AnyUrl
 import httpx
+import anyio
 
 from mcp_proxy.proxy_server import create_proxy_server
 
@@ -389,6 +390,56 @@ class _ReinitTimeoutRemoteApp:
         return types.CallToolResult(content=[], isError=False)
 
 
+class _ClosedTransportRemoteApp:
+    """Stub remote client that raises ClosedResourceError during re-init."""
+
+    def __init__(self, *, retry_attempts: int = 1):
+        self._retry_attempts = retry_attempts
+        self.call_count = 0
+        self.init_count = 0
+        self.rebuild_count = 0
+        self.rebuilt = False
+
+    async def initialize(self):
+        self.init_count += 1
+        if self.init_count > 1 and not self.rebuilt:
+            raise anyio.ClosedResourceError()
+        return types.InitializeResult(
+            protocolVersion="2025-06-18",
+            serverInfo=types.Implementation(name="stub", version="1.0.0"),
+            capabilities=types.ServerCapabilities(
+                tools=types.ToolsCapability(listChanged=True),
+                logging=None,
+                prompts=None,
+                resources=None,
+            ),
+            instructions=None,
+        )
+
+    async def list_tools(self):
+        return types.ListToolsResult(
+            tools=[
+                types.Tool(
+                    name="tool",
+                    description="stub tool",
+                    inputSchema={"type": "object", "properties": {}},
+                ),
+            ],
+        )
+
+    async def rebuild(self):
+        self.rebuild_count += 1
+        self.rebuilt = True
+
+    async def call_tool(self, name: str, arguments: dict[str, t.Any]):
+        self.call_count += 1
+        if not self.rebuilt:
+            request = httpx.Request("POST", "http://example.test/mcp")
+            response = httpx.Response(404, request=request)
+            raise httpx.HTTPStatusError("Session not found", request=request, response=response)
+        return types.CallToolResult(content=[], isError=False)
+
+
 class _RetryRemoteResourcesApp:
     """Stub remote client exposing resources, failing once then succeeding."""
 
@@ -567,7 +618,7 @@ async def test_proxy_read_resource_retries_on_timeout() -> None:
         assert res.contents == []
 
     # initialize called once at startup and once during retry
-    assert remote.init_count == 2
+    assert remote.init_count == 3
     assert remote.read_count == 2
 
 
@@ -593,7 +644,7 @@ async def test_call_tool_retries_when_http_error_queue_fires() -> None:
 
     assert not result.isError
     assert remote.call_count == 2
-    assert remote.init_count == 2
+    assert remote.init_count == 3
 
 
 @pytest.mark.asyncio
@@ -1079,7 +1130,7 @@ async def test_proxy_call_tool_retries_on_http_status() -> None:
         assert res.content == []
 
     # initialize called once at startup and once during retry
-    assert remote.init_count == 2
+    assert remote.init_count == 3
     assert remote.call_count == 2
 
 
@@ -1234,7 +1285,7 @@ async def test_proxy_call_tool_retries_on_session_terminated_error_result() -> N
         assert res.content == []
 
     assert remote.call_count == 2
-    assert remote.init_count == 2
+    assert remote.init_count == 3
 
 
 @pytest.mark.asyncio
@@ -1312,6 +1363,31 @@ async def test_proxy_call_tool_reinitializes_after_idle_404() -> None:
 async def test_proxy_call_tool_rebuilds_after_reinit_timeout() -> None:
     #region Arrange
     remote = _ReinitTimeoutRemoteApp(retry_attempts=1, reinit_timeout_s=0.05)
+    app = await create_proxy_server(remote)
+    #endregion Arrange
+
+    #region Initial Assert
+    assert remote.init_count == 1
+    assert remote.rebuild_count == 0
+    #endregion Initial Assert
+
+    #region Act
+    async with create_connected_server_and_client_session(app) as session:
+        result = await session.call_tool("tool", {})
+    #endregion Act
+
+    #region Assert
+    assert not result.isError
+    assert remote.rebuild_count == 1
+    assert remote.call_count == 2
+    assert remote.init_count == 3
+    #endregion Assert
+
+
+@pytest.mark.asyncio
+async def test_proxy_call_tool_rebuilds_on_closed_transport_reinit() -> None:
+    #region Arrange
+    remote = _ClosedTransportRemoteApp(retry_attempts=1)
     app = await create_proxy_server(remote)
     #endregion Arrange
 

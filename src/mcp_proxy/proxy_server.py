@@ -9,6 +9,7 @@ import typing as t
 import time
 
 import httpx
+import anyio
 
 from mcp import server, types
 from mcp.client.session import ClientSession
@@ -34,6 +35,16 @@ def _iter_exceptions(exc: BaseException) -> t.Iterator[BaseException]:
     context = getattr(exc, "__context__", None)
     if isinstance(context, BaseException) and context is not exc and context is not cause:
         yield from _iter_exceptions(context)
+
+
+def _is_transport_closed_error(exc: BaseException) -> bool:
+    """Return True if the transport is closed (write stream unusable)."""
+    for leaf in _iter_exceptions(exc):
+        if isinstance(leaf, anyio.ClosedResourceError):
+            return True
+        if isinstance(leaf, ValueError) and "I/O operation on closed file" in str(leaf):
+            return True
+    return False
 
 
 async def create_proxy_server(remote_app: ClientSession) -> server.Server[object]:  # noqa: C901, PLR0915
@@ -78,6 +89,8 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         try:
             await task
         except asyncio.CancelledError:
+            return
+        except Exception:  # noqa: BLE001
             return
 
     def _describe_last_post() -> str | None:
@@ -325,11 +338,17 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 )
                 return
             except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "%s re-initialize after 404 failed; falling back to transport rebuild; error=%s",
-                    label,
-                    exc,
-                )
+                if _is_transport_closed_error(exc):
+                    logger.warning(
+                        "%s re-initialize after 404 failed; transport closed; forcing rebuild",
+                        label,
+                    )
+                else:
+                    logger.warning(
+                        "%s re-initialize after 404 failed; falling back to transport rebuild; error=%s",
+                        label,
+                        exc,
+                    )
 
         if _should_rebuild_session(status) and hasattr(remote_app, "rebuild"):
             start = time.monotonic()
@@ -535,6 +554,24 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                 backoff_s = min(5.0, backoff_s * 2)
                 continue
             except Exception as exc:  # noqa: BLE001
+                transport_closed = _is_transport_closed_error(exc)
+                if transport_closed and attempts + 1 < max_attempts:
+                    attempts += 1
+                    logger.warning(
+                        "%s got closed transport; rebuilding (%s/%s)",
+                        label,
+                        attempts,
+                        max_attempts - 1,
+                    )
+                    await _rebuild_or_initialize_timeout(
+                        label,
+                        attempts=attempts,
+                        max_attempts=max_attempts,
+                        detail="transport closed",
+                    )
+                    await asyncio.sleep(backoff_s)
+                    backoff_s = min(5.0, backoff_s * 2)
+                    continue
                 session_error = _session_error_in_exception(exc)
                 if session_error and attempts + 1 < max_attempts:
                     attempts += 1
@@ -744,6 +781,24 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                                 await asyncio.sleep(sleep_s)
                             if status != 404:
                                 backoff_s = min(5.0, backoff_s * 2)
+                            continue
+
+                        if _is_transport_closed_error(exc) and attempts + 1 < max_attempts:
+                            attempts += 1
+                            logger.warning(
+                                "CallTool %s got closed transport; rebuilding (%s/%s)",
+                                req.params.name,
+                                attempts,
+                                max_attempts - 1,
+                            )
+                            await _rebuild_or_initialize_timeout(
+                                f"CallTool {req.params.name}",
+                                attempts=attempts,
+                                max_attempts=max_attempts,
+                                detail="transport closed",
+                            )
+                            await asyncio.sleep(backoff_s)
+                            backoff_s = min(5.0, backoff_s * 2)
                             continue
 
                         # Handle JSON-RPC session errors that come back as 200 with an error payload
