@@ -22,6 +22,8 @@ from starlette.routing import BaseRoute, Mount, Route
 from starlette.types import Receive, Scope, Send
 
 from .proxy_server import create_proxy_server
+from .token_middleware import TokenExtractionMiddleware
+from .dynamic_stdio_manager import DynamicStdioManager
 
 logger = logging.getLogger(__name__)
 
@@ -138,14 +140,169 @@ def create_single_instance_routes(
     return routes, http_session_manager
 
 
+async def run_mcp_server_with_dynamic_tokens(
+    mcp_settings: MCPServerSettings,
+    default_server_params: StdioServerParameters | None = None,
+    named_server_params: dict[str, StdioServerParameters] | None = None,
+    header_mappings: dict[str, dict[str, str]] | None = None,
+) -> None:
+    """Run stdio client(s) with dynamic token support and expose an MCP server."""
+    if named_server_params is None:
+        named_server_params = {}
+    if header_mappings is None:
+        header_mappings = {}
+
+    # Initialize dynamic stdio manager
+    stdio_manager = DynamicStdioManager()
+    
+    all_routes: list[BaseRoute] = [
+        Route("/status", endpoint=_handle_status),  # Global status endpoint
+    ]
+    
+    # Use AsyncExitStack to manage lifecycles of multiple components
+    async with contextlib.AsyncExitStack() as stack:
+        # Manage lifespans of all StreamableHTTPSessionManagers
+        @contextlib.asynccontextmanager
+        async def combined_lifespan(_app: Starlette) -> AsyncIterator[None]:
+            logger.info("Main application lifespan starting...")
+            # Register servers with the dynamic manager
+            if default_server_params:
+                await stdio_manager.register_server("default", default_server_params)
+                await stdio_manager.start_server("default")
+            
+            for name, params in named_server_params.items():
+                await stdio_manager.register_server(name, params)
+                await stdio_manager.start_server(name)
+            
+            yield
+            
+            logger.info("Main application lifespan shutting down...")
+            await stdio_manager.stop_all_servers()
+
+        # Setup default server if configured
+        if default_server_params:
+            logger.info(
+                "Setting up default server: %s %s",
+                default_server_params.command,
+                " ".join(default_server_params.args),
+            )
+            
+            # Get session from dynamic manager
+            session = stdio_manager.get_server_session("default")
+            if session:
+                proxy = await create_proxy_server(session)
+
+                instance_routes, http_manager = create_single_instance_routes(
+                    proxy,
+                    stateless_instance=mcp_settings.stateless,
+                )
+                await stack.enter_async_context(http_manager.run())
+                all_routes.extend(instance_routes)
+                _global_status["server_instances"]["default"] = "configured"
+
+        # Setup named servers
+        for name, params in named_server_params.items():
+            logger.info(
+                "Setting up named server '%s': %s %s",
+                name,
+                params.command,
+                " ".join(params.args),
+            )
+            
+            # Get session from dynamic manager
+            session = stdio_manager.get_server_session(name)
+            if session:
+                proxy = await create_proxy_server(session)
+
+                instance_routes, http_manager = create_single_instance_routes(
+                    proxy,
+                    stateless_instance=mcp_settings.stateless,
+                )
+                await stack.enter_async_context(http_manager.run())
+
+                # Mount these routes under /servers/<name>/
+                server_mount = Mount(f"/servers/{name}", routes=instance_routes)
+                all_routes.append(server_mount)
+                _global_status["server_instances"][name] = "configured"
+
+        if not default_server_params and not named_server_params:
+            logger.error("No servers configured to run.")
+            return
+
+        middleware: list[Middleware] = []
+        
+        # Add token extraction middleware if header mappings are provided
+        if header_mappings:
+            middleware.append(
+                Middleware(
+                    TokenExtractionMiddleware,
+                    header_mappings=header_mappings,
+                ),
+            )
+        
+        if mcp_settings.allow_origins:
+            middleware.append(
+                Middleware(
+                    CORSMiddleware,
+                    allow_origins=mcp_settings.allow_origins,
+                    allow_methods=["*"],
+                    allow_headers=["*"],
+                ),
+            )
+
+        starlette_app = Starlette(
+            debug=(mcp_settings.log_level == "DEBUG"),
+            routes=all_routes,
+            middleware=middleware,
+            lifespan=combined_lifespan,
+        )
+
+        starlette_app.router.redirect_slashes = False
+
+        config = uvicorn.Config(
+            starlette_app,
+            host=mcp_settings.bind_host,
+            port=mcp_settings.port,
+            log_level=mcp_settings.log_level.lower(),
+        )
+        http_server = uvicorn.Server(config)
+
+        # Print out the SSE URLs for all configured servers
+        base_url = f"http://{mcp_settings.bind_host}:{mcp_settings.port}"
+        sse_urls = []
+
+        # Add default server if configured
+        if default_server_params:
+            sse_urls.append(f"{base_url}/sse")
+
+        # Add named servers
+        sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
+
+        # Display the SSE URLs prominently
+        if sse_urls:
+            logger.info("Serving MCP Servers via SSE:")
+            for url in sse_urls:
+                logger.info("  - %s", url)
+
+        logger.debug(
+            "Serving incoming MCP requests on %s:%s",
+            mcp_settings.bind_host,
+            mcp_settings.port,
+        )
+        await http_server.serve()
+
+
 async def run_mcp_server(
     mcp_settings: MCPServerSettings,
     default_server_params: StdioServerParameters | None = None,
     named_server_params: dict[str, StdioServerParameters] | None = None,
+    header_mappings: dict[str, dict[str, str]] | None = None,
 ) -> None:
     """Run stdio client(s) and expose an MCP server with multiple possible backends."""
     if named_server_params is None:
         named_server_params = {}
+    if header_mappings is None:
+        header_mappings = {}
 
     all_routes: list[BaseRoute] = [
         Route("/status", endpoint=_handle_status),  # Global status endpoint
@@ -209,6 +366,16 @@ async def run_mcp_server(
             return
 
         middleware: list[Middleware] = []
+        
+        # Add token extraction middleware if header mappings are provided
+        if header_mappings:
+            middleware.append(
+                Middleware(
+                    TokenExtractionMiddleware,
+                    header_mappings=header_mappings,
+                ),
+            )
+        
         if mcp_settings.allow_origins:
             middleware.append(
                 Middleware(
