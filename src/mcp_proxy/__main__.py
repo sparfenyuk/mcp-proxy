@@ -20,7 +20,7 @@ from httpx_auth import OAuth2ClientCredentials
 from mcp.client.stdio import StdioServerParameters
 
 from .config_loader import load_named_server_configs_from_file
-from .mcp_server import MCPServerSettings, run_mcp_server
+from .mcp_server import DEFAULT_EXPOSE_HEADERS, MCPServerSettings, run_mcp_server
 from .sse_client import run_sse_client
 from .streamablehttp_client import run_streamablehttp_client
 
@@ -262,6 +262,17 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
             "Default is no CORS allowed."
         ),
     )
+    mcp_server_group.add_argument(
+        "--expose-header",
+        action="append",
+        dest="expose_headers",
+        metavar="HEADER",
+        default=None,
+        help=(
+            "Headers to expose via Access-Control-Expose-Headers. "
+            "Defaults to 'Mcp-Session-Id'. Can be used multiple times."
+        ),
+    )
 
 
 def _setup_logging(*, level: str, debug: bool) -> logging.Logger:
@@ -420,11 +431,17 @@ def _configure_named_servers_from_cli(
 
 def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
     """Create MCP server settings from parsed arguments."""
+    expose_headers = (
+        list(DEFAULT_EXPOSE_HEADERS)
+        if not args_parsed.expose_headers
+        else list(args_parsed.expose_headers)
+    )
     return MCPServerSettings(
         bind_host=args_parsed.host if args_parsed.host is not None else args_parsed.sse_host,
         port=args_parsed.port if args_parsed.port is not None else args_parsed.sse_port,
         stateless=args_parsed.stateless,
         allow_origins=args_parsed.allow_origin if len(args_parsed.allow_origin) > 0 else None,
+        expose_headers=expose_headers,
         log_level="DEBUG" if args_parsed.debug else args_parsed.log_level,
     )
 
