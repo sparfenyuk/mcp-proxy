@@ -39,6 +39,7 @@ class MCPServerSettings:
     bind_host: str
     port: int
     stateless: bool = False
+    json_response: bool = False
     allow_origins: list[str] | None = None
     expose_headers: list[str] = field(default_factory=_default_expose_headers)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -77,18 +78,20 @@ def create_single_instance_routes(
     mcp_server_instance: MCPServerSDK[object],
     *,
     stateless_instance: bool,
+    json_response_instance: bool,
 ) -> tuple[list[BaseRoute], StreamableHTTPSessionManager]:  # Return the manager itself
     """Create Starlette routes and the HTTP session manager for a single MCP server instance."""
     logger.debug(
-        "Creating routes for a single MCP server instance (stateless: %s)",
+        "Creating routes for a single MCP server instance (stateless: %s, json_response: %s)",
         stateless_instance,
+        json_response_instance,
     )
 
     sse_transport = SseServerTransport("/messages/")
     http_session_manager = StreamableHTTPSessionManager(
         app=mcp_server_instance,
         event_store=None,
-        json_response=True,
+        json_response=json_response_instance,
         stateless=stateless_instance,
     )
 
@@ -181,6 +184,7 @@ async def run_mcp_server(
             instance_routes, http_manager = create_single_instance_routes(
                 proxy,
                 stateless_instance=mcp_settings.stateless,
+                json_response_instance=mcp_settings.json_response,
             )
             await stack.enter_async_context(http_manager.run())  # Manage lifespan by calling run()
             all_routes.extend(instance_routes)
@@ -201,6 +205,7 @@ async def run_mcp_server(
             instance_routes_named, http_manager_named = create_single_instance_routes(
                 proxy_named,
                 stateless_instance=mcp_settings.stateless,
+                json_response_instance=mcp_settings.json_response,
             )
             await stack.enter_async_context(
                 http_manager_named.run(),
