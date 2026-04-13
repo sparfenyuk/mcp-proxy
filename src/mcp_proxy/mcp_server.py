@@ -1,6 +1,7 @@
 """Create a local SSE server that proxies requests to a stdio MCP server."""
 
 import contextlib
+import hmac
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -15,17 +16,21 @@ from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, Route
-from starlette.types import Receive, Scope, Send
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .proxy_server import create_proxy_server
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_EXPOSE_HEADERS: Final[tuple[str, ...]] = ("mcp-session-id",)
+
+# Path prefixes that bypass Bearer auth (health checks, no sensitive data).
+_AUTH_BYPASS_PATH_PREFIXES: Final[tuple[str, ...]] = ("/status",)
 
 
 def _default_expose_headers() -> list[str]:
@@ -42,6 +47,48 @@ class MCPServerSettings:
     allow_origins: list[str] | None = None
     expose_headers: list[str] = field(default_factory=_default_expose_headers)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    auth_bearer_token: str | None = None
+
+
+class BearerAuthMiddleware(BaseHTTPMiddleware):
+    """Require an `Authorization: Bearer <token>` header on protected routes.
+
+    The token is compared in constant time. Requests that target a path under
+    `_AUTH_BYPASS_PATH_PREFIXES` (e.g. `/status`) are forwarded without
+    authentication. Missing or invalid credentials yield a 401 with a
+    `WWW-Authenticate: Bearer` challenge.
+    """
+
+    def __init__(self, app: ASGIApp, *, token: str) -> None:
+        """Initialize the middleware. ``token`` must be a non-empty string."""
+        super().__init__(app)
+        if not token:
+            msg = "BearerAuthMiddleware requires a non-empty token"
+            raise ValueError(msg)
+        self._token = token
+
+    async def dispatch(  # type: ignore[override]
+        self,
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        """Validate the bearer token, then forward the request or reject with 401."""
+        path = request.url.path
+        if any(path.startswith(prefix) for prefix in _AUTH_BYPASS_PATH_PREFIXES):
+            return await call_next(request)
+
+        header = request.headers.get("authorization", "")
+        scheme, _, credentials = header.partition(" ")
+        if scheme.lower() != "bearer" or not credentials or not hmac.compare_digest(
+            credentials,
+            self._token,
+        ):
+            return JSONResponse(
+                {"error": "unauthorized", "error_description": "Bearer token required"},
+                status_code=401,
+                headers={"WWW-Authenticate": 'Bearer realm="mcp-proxy"'},
+            )
+        return await call_next(request)
 
 
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
@@ -145,6 +192,30 @@ def create_single_instance_routes(
     return routes, http_session_manager
 
 
+def _build_middleware_stack(mcp_settings: MCPServerSettings) -> list[Middleware]:
+    """Assemble the Starlette middleware list for the proxied MCP application."""
+    middleware: list[Middleware] = []
+    if mcp_settings.allow_origins:
+        middleware.append(
+            Middleware(
+                CORSMiddleware,
+                allow_origins=mcp_settings.allow_origins,
+                allow_methods=["*"],
+                allow_headers=["*"],
+                expose_headers=mcp_settings.expose_headers,
+            ),
+        )
+    if mcp_settings.auth_bearer_token:
+        middleware.append(
+            Middleware(
+                BearerAuthMiddleware,
+                token=mcp_settings.auth_bearer_token,
+            ),
+        )
+        logger.info("Bearer token authentication enabled.")
+    return middleware
+
+
 async def run_mcp_server(
     mcp_settings: MCPServerSettings,
     default_server_params: StdioServerParameters | None = None,
@@ -215,17 +286,7 @@ async def run_mcp_server(
             logger.error("No servers configured to run.")
             return
 
-        middleware: list[Middleware] = []
-        if mcp_settings.allow_origins:
-            middleware.append(
-                Middleware(
-                    CORSMiddleware,
-                    allow_origins=mcp_settings.allow_origins,
-                    allow_methods=["*"],
-                    allow_headers=["*"],
-                    expose_headers=mcp_settings.expose_headers,
-                ),
-            )
+        middleware = _build_middleware_stack(mcp_settings)
 
         starlette_app = Starlette(
             debug=(mcp_settings.log_level == "DEBUG"),
