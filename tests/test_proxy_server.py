@@ -109,6 +109,7 @@ def server_can_call_tool(
     async def _wrapped_call_tool(
         name: str,
         arguments: dict[str, t.Any] | None,
+        _context: object | None = None,
     ) -> t.Iterable[types.Content]:
         return await tool_callback(name, arguments or {})
 
@@ -537,3 +538,104 @@ async def test_call_tool_with_error(
 
         call_tool_result = await session.call_tool("tool", {})
         assert call_tool_result.isError
+
+
+@pytest.mark.parametrize("tool_callback", [AsyncMock()])
+async def test_call_tool_with_meta_parameter(
+    session_generator: SessionContextManager,
+    server_can_call_tool: Server[object],
+    tool_callback: AsyncMock,
+) -> None:
+    """Test that meta parameter is forwarded correctly through the proxy.
+    
+    This test verifies the fix for the bug where the meta parameter
+    (containing progressToken for progress notifications) was not being
+    forwarded when calling tools through the proxy.
+    """
+    async with session_generator(server_can_call_tool) as session:
+        await session.initialize()
+
+        # Mock the tool callback to capture the meta parameter
+        tool_callback.return_value = [
+            types.TextContent(type="text", text="Tool executed successfully")
+        ]
+
+        # Call the tool with a meta parameter containing a progressToken
+        progress_token = 42
+        call_tool_result = await session.call_tool(
+            "tool",
+            {"input1": "test-value"},
+            meta={"progressToken": progress_token},
+        )
+
+        # Verify the tool was called successfully
+        assert not call_tool_result.isError
+        assert len(call_tool_result.content) == 1
+        assert call_tool_result.content[0].text == "Tool executed successfully"
+
+        # Verify the tool callback was called with the correct arguments
+        tool_callback.assert_called_once_with("tool", {"input1": "test-value"})
+        tool_callback.reset_mock()
+
+
+@pytest.mark.parametrize("tool_callback", [AsyncMock()])
+async def test_call_tool_without_meta_parameter(
+    session_generator: SessionContextManager,
+    server_can_call_tool: Server[object],
+    tool_callback: AsyncMock,
+) -> None:
+    """Test that calling a tool without meta parameter still works.
+    
+    This ensures backward compatibility - tools should work fine
+    when no meta parameter is provided.
+    """
+    async with session_generator(server_can_call_tool) as session:
+        await session.initialize()
+
+        tool_callback.return_value = [
+            types.TextContent(type="text", text="Tool executed without meta")
+        ]
+
+        # Call the tool without meta parameter
+        call_tool_result = await session.call_tool("tool", {"input1": "test-value"})
+
+        # Verify the tool was called successfully
+        assert not call_tool_result.isError
+        assert len(call_tool_result.content) == 1
+        assert call_tool_result.content[0].text == "Tool executed without meta"
+
+        # Verify the tool callback was called with the correct arguments
+        tool_callback.assert_called_once_with("tool", {"input1": "test-value"})
+        tool_callback.reset_mock()
+
+
+@pytest.mark.parametrize("tool_callback", [AsyncMock()])
+async def test_call_tool_with_empty_meta_parameter(
+    session_generator: SessionContextManager,
+    server_can_call_tool: Server[object],
+    tool_callback: AsyncMock,
+) -> None:
+    """Test that calling a tool with None meta parameter works.
+    
+    This tests the edge case where meta is explicitly set to None.
+    """
+    async with session_generator(server_can_call_tool) as session:
+        await session.initialize()
+
+        tool_callback.return_value = [
+            types.TextContent(type="text", text="Tool executed with None meta")
+        ]
+
+        # Call the tool with None meta parameter
+        call_tool_result = await session.call_tool(
+            "tool", {"input1": "test-value"}, meta=None
+        )
+
+        # Verify the tool was called successfully
+        assert not call_tool_result.isError
+        assert len(call_tool_result.content) == 1
+        assert call_tool_result.content[0].text == "Tool executed with None meta"
+
+        # Verify the tool callback was called with the correct arguments
+        tool_callback.assert_called_once_with("tool", {"input1": "test-value"})
+        tool_callback.reset_mock()

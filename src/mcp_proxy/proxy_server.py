@@ -92,9 +92,12 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
         async def _call_tool(req: types.CallToolRequest) -> types.ServerResult:
             try:
+                # Convert meta to dict if present (required for TypedDict compatibility)
+                meta_dict = dict(req.params.meta) if req.params.meta else None
                 result = await remote_app.call_tool(
                     req.params.name,
                     (req.params.arguments or {}),
+                    meta=meta_dict,
                 )
                 return types.ServerResult(result)
             except Exception as e:  # noqa: BLE001
