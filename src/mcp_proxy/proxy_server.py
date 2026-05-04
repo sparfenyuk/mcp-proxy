@@ -4,7 +4,6 @@ This server is created independent of any transport mechanism.
 """
 
 import logging
-import sys
 import typing as t
 
 from mcp import server, types
@@ -102,8 +101,6 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
                 # Create progress forwarder callback
                 # Note: The callback receives individual parameters, not a ProgressNotificationParams object
-                # Capture sys in closure to avoid scoping issues
-                _stderr = sys.stderr
                 async def progress_forwarder(progress: float, total: float | None, message: str | None) -> None:
                     # Extract progress token from meta
                     progress_token = meta_dict.get('progressToken') if meta_dict else None
@@ -117,10 +114,13 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                             related_request_id=str(ctx.request_id),
                         )
                     else:
-                        print(
-                            "[MCP-PROXY] WARNING: No progressToken in meta, cannot forward progress notification",
-                            file=_stderr,
-                            flush=True,
+                        logger.warning(
+                            "No progressToken in meta, cannot forward progress notification "
+                            "(tool: %s, request_id: %s, progress: %s/%s)",
+                            req.params.name,
+                            ctx.request_id,
+                            progress,
+                            total,
                         )
 
                 result = await remote_app.call_tool(
