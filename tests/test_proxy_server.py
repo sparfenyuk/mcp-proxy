@@ -584,12 +584,16 @@ async def test_call_tool_with_meta_parameter(
         assert call_tool_result.content[0].text == "Tool executed successfully"
 
         # Verify the tool callback was called with the correct arguments
-        # Note: _context will be None in server mode, but present in proxy mode
+        # and that the forwarded context includes the expected meta.
         tool_callback.assert_called_once()
         call_args = tool_callback.call_args
         assert call_args[0][0] == "tool"  # name
         assert call_args[0][1] == {"input1": "test-value"}  # arguments
-        # _context (third arg) may be None or an object depending on mode
+        assert len(call_args[0]) >= 3
+        context = call_args[0][2]
+        assert context is not None
+        assert context.meta is not None
+        assert context.meta["progressToken"] == progress_token
         tool_callback.reset_mock()
 
 
