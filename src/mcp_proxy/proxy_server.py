@@ -8,6 +8,7 @@ import typing as t
 
 from mcp import server, types
 from mcp.client.session import ClientSession
+from mcp.server.lowlevel.server import request_ctx
 
 logger = logging.getLogger(__name__)
 
@@ -92,19 +93,23 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
         async def _call_tool(req: types.CallToolRequest) -> types.ServerResult:
             try:
-                # Get request context to access server session for progress forwarding
-                from mcp.server.lowlevel.server import request_ctx
-                ctx = request_ctx.get()
-                
                 # Convert meta to dict if present (required for TypedDict compatibility)
                 meta_dict = dict(req.params.meta) if req.params.meta else None
 
-                # Create progress forwarder callback
-                # Note: The callback receives individual parameters, not a ProgressNotificationParams object
-                async def progress_forwarder(progress: float, total: float | None, message: str | None) -> None:
-                    # Extract progress token from meta
-                    progress_token = meta_dict.get('progressToken') if meta_dict else None
-                    if progress_token is not None:
+                # Only set up progress forwarding if progressToken is present
+                progress_token = meta_dict.get("progressToken") if meta_dict else None
+                progress_callback = None
+
+                if progress_token is not None:
+                    # Get request context to access server session for progress forwarding
+                    ctx = request_ctx.get()
+
+                    # Create progress forwarder callback
+                    # Note: The callback receives individual parameters, not a
+                    # ProgressNotificationParams object
+                    async def progress_forwarder(
+                        progress: float, total: float | None, message: str | None,
+                    ) -> None:
                         # Forward progress notification back to parent via server session
                         await ctx.session.send_progress_notification(
                             progress_token=progress_token,
@@ -113,21 +118,14 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                             message=message,
                             related_request_id=str(ctx.request_id),
                         )
-                    else:
-                        logger.warning(
-                            "No progressToken in meta, cannot forward progress notification "
-                            "(tool: %s, request_id: %s, progress: %s/%s)",
-                            req.params.name,
-                            ctx.request_id,
-                            progress,
-                            total,
-                        )
+
+                    progress_callback = progress_forwarder
 
                 result = await remote_app.call_tool(
                     req.params.name,
                     (req.params.arguments or {}),
                     meta=meta_dict,
-                    progress_callback=progress_forwarder,
+                    progress_callback=progress_callback,
                 )
                 return types.ServerResult(result)
             except Exception as e:  # noqa: BLE001
