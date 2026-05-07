@@ -634,7 +634,7 @@ async def test_call_tool_without_meta_parameter(
 
 
 @pytest.mark.parametrize("tool_callback", [AsyncMock()])
-async def test_call_tool_with_empty_meta_parameter(
+async def test_call_tool_with_none_meta_parameter(
     session_generator: SessionContextManager,
     server_can_call_tool: Server[object],
     tool_callback: AsyncMock,
