@@ -537,3 +537,52 @@ async def test_call_tool_with_error(
 
         call_tool_result = await session.call_tool("tool", {})
         assert call_tool_result.isError
+
+
+async def test_proxy_preserves_server_metadata() -> None:
+    """The proxy must forward serverInfo (name, version, websiteUrl, icons)
+    and the top-level instructions field from the wrapped stdio server's
+    initialize response, instead of dropping everything except the name.
+
+    Regression test for sparfenyuk/mcp-proxy#206.
+    """
+    upstream_icon = types.Icon(src="https://example.invalid/icon.svg", mimeType="image/svg+xml")
+    upstream = Server(
+        "upstream-name",
+        version="1.2.3",
+        instructions="USE WHEN you need foo, bar, baz.",
+        website_url="https://example.invalid",
+        icons=[upstream_icon],
+    )
+
+    async with in_memory(upstream) as session:
+        await session.initialize()
+        wrapped = await create_proxy_server(session)
+
+    assert wrapped.name == "upstream-name"
+    assert wrapped.version == "1.2.3"
+    assert wrapped.instructions == "USE WHEN you need foo, bar, baz."
+    assert wrapped.website_url == "https://example.invalid"
+    assert wrapped.icons == [upstream_icon]
+
+
+async def test_proxy_handles_minimal_server_metadata() -> None:
+    """The proxy must also work when the wrapped server provides only a name
+    (no instructions, website_url, or icons) — the optional fields must be
+    propagated without raising.
+
+    Note: the MCP SDK auto-fills `version` from the SDK's own version when a
+    Server is constructed without one, so we don't assert version is None —
+    we just check the proxy passes whatever the upstream actually exposes.
+    """
+    upstream = Server("minimal-upstream")
+
+    async with in_memory(upstream) as session:
+        result = await session.initialize()
+        wrapped = await create_proxy_server(session)
+
+    assert wrapped.name == "minimal-upstream"
+    assert wrapped.version == result.serverInfo.version
+    assert wrapped.instructions is None
+    assert wrapped.website_url is None
+    assert wrapped.icons is None
