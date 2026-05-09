@@ -1,7 +1,10 @@
 [project]
 name = "mcp-proxy"
-description = "A MCP server which proxies requests to a remote MCP server over streamable HTTP or SSE."
-authors = [{ name = "Sergey Parfenyuk", email = "sergey.parfenyuk@gmail.com" }]
+description = "Enhanced MCP proxy with health endpoint, graceful failure handling, env var expansion, API key auth, and rmcp 0.17 compatibility. Fork of sparfenyuk/mcp-proxy."
+authors = [
+    { name = "Claudio Ferreira Filho", email = "filhocf@gmail.com" },
+    { name = "Sergey Parfenyuk", email = "sergey.parfenyuk@gmail.com" },
+]
 license = { file = "LICENSE" }
 readme = "README.md"
 classifiers = [
@@ -30,18 +33,27 @@ version = "0.10.0"
 requires-python = ">=3.10"
 dependencies = ["httpx-auth>=0.22.0", "mcp>=1.17.0", "uvicorn>=0.34.0"]
 
+[project.optional-dependencies]
+otel = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.20.0",
+]
+
 [build-system]
 requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project.urls]
-Homepage = "https://github.com/sparfenyuk/mcp-proxy"
-Source = "https://github.com/sparfenyuk/mcp-proxy"
-Documentation = "https://github.com/sparfenyuk/mcp-proxy"
-Changelog = "https://github.com/sparfenyuk/mcp-proxy/releases"
+Homepage = "https://github.com/filhocf/mcp-proxy"
+Source = "https://github.com/filhocf/mcp-proxy"
+Documentation = "https://github.com/filhocf/mcp-proxy"
+Changelog = "https://github.com/filhocf/mcp-proxy/releases"
+Upstream = "https://github.com/sparfenyuk/mcp-proxy"
 
 [project.scripts]
 mcp-proxy = "mcp_proxy.__main__:main"
+mcp-proxy-plus = "mcp_proxy.__main__:main"
 mcp-reverse-proxy = "mcp_proxy.__main__:client"
 
 [tool.setuptools.package-data]
@@ -93,13 +105,49 @@ warn_unused_ignores = true
 [tool.ruff.lint]
 select = ["ALL"]
 ignore = [
-    "EM101",  # Exception must not use a string literal, assign to variable first
-    "TRY003", # Avoid specifying long messages outside the exception class
-    "ERA001", # Found commented-out code
+    "EM101",   # Exception must not use a string literal
+    "TRY003",  # Avoid specifying long messages outside the exception class
+    "ERA001",  # Found commented-out code
+    "FBT001",  # Boolean-typed positional argument (upstream pattern)
+    "FBT003",  # Boolean positional value in function call
+    "C901",    # Function too complex
+    "PLR0912", # Too many branches
+    "PLR0915", # Too many statements
+    "PERF203", # try-except in loop (intentional for graceful failure)
+    "RUF059",  # Unused unpacked variable (test fixtures)
+    "PTH111",  # os.path.expanduser (upstream pattern)
+    "PTH123",  # open() should be Path.open()
+    "RUF100",  # Unused noqa directives
+    "RUF006",  # Store reference to asyncio.create_task
+    "COM812",  # Trailing comma missing (conflicts with ruff-format)
+    "ANN401",  # Dynamically typed expressions (Any)
+    "ANN001",  # Missing type annotation for function argument
+    "ANN002",  # Missing type annotation for *args
+    "ANN201",  # Missing return type annotation for public function
+    "ANN202",  # Missing return type annotation for private function
+    "D101",    # Missing docstring in public class
+    "D102",    # Missing docstring in public method
+    "D103",    # Missing docstring in public function
+    "D105",    # Missing docstring in magic method
+    "D107",    # Missing docstring in __init__
+    "TRY300",  # Consider moving to else block
+    "TRY401",  # Redundant exception in logging.exception
+    "I001",    # Import block unsorted (ruff-format handles)
+    "PLW0603", # Using global statement
+    "SIM102",  # Collapsible if (style preference)
+    "PLR2004", # Magic value in comparison (too strict for tests)
+    "SLF001",  # Private member access (needed in tests)
+    "S106",    # Possible hardcoded password (test fixtures)
+    "ARG002",  # Unused method argument
+    "PERF401", # Use list comprehension (style preference)
+    "ASYNC240", # Blocking path method in async (test cleanup)
+    "E501",    # Line too long (ruff-format handles most, HTML strings remain)
+    "ASYNC110", # asyncio.sleep in while loop (test server pattern)
+    "ARG001",  # Unused function argument (test fixtures, callbacks)
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101", "INP001"]
+"tests/*" = ["S101", "INP001", "PLC0415"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

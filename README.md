@@ -373,6 +373,7 @@ SSE server options:
                         Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.
   --expose-header HEADER
                         Headers to expose via Access-Control-Expose-Headers. Defaults to 'Mcp-Session-Id'. Can be used multiple times.
+  --api-key KEY         API key to require for all requests (except /health, /status, and CORS preflight). Clients must send 'Authorization: Bearer <KEY>'. Can also be set via MCP_PROXY_API_KEY environment variable.
 
 Examples:
   mcp-proxy http://localhost:8080/sse
@@ -385,6 +386,48 @@ Examples:
   mcp-proxy your-command --port 8080 -e KEY VALUE -e ANOTHER_KEY ANOTHER_VALUE
   mcp-proxy your-command --port 8080 --allow-origin='*'
   mcp-proxy your-command --port 8080 --allow-origin='*' --expose-header Custom-Header
+  mcp-proxy --api-key my-secret-key --port 8080 -- your-command
+```
+
+## Authentication
+
+The proxy supports API key authentication to secure all endpoints. When enabled, clients must include an `Authorization: Bearer <KEY>` header in every request.
+
+### Configuration
+
+Set the API key via CLI flag or environment variable:
+
+```bash
+# Via CLI flag
+mcp-proxy --api-key my-secret-key --port 8080 -- your-command
+
+# Via environment variable
+export MCP_PROXY_API_KEY=my-secret-key
+mcp-proxy --port 8080 -- your-command
+```
+
+### Behavior
+
+- `/health` and `/status` endpoints are **always public** (no auth required)
+- CORS preflight requests (`OPTIONS`) bypass authentication
+- When no API key is configured, the proxy operates without authentication (backward compatible)
+- Unauthorized requests receive a `401` response with `WWW-Authenticate: Bearer` header
+
+### Client configuration
+
+MCP clients must send the `Authorization` header. Example for Kiro CLI (`mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "url": "http://localhost:8080/servers/my-server/sse",
+      "headers": {
+        "Authorization": "Bearer my-secret-key"
+      }
+    }
+  }
+}
 ```
 
 ### Example config file

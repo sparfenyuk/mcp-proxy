@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 import pytest
 from mcp.client.stdio import StdioServerParameters
 
-from mcp_proxy.config_loader import load_named_server_configs_from_file
+from mcp_proxy.config_loader import ServerConfig, load_named_server_configs_from_file
 
 
 @pytest.fixture
@@ -60,16 +60,16 @@ def test_load_valid_config(create_temp_config_file: Callable[[dict[str, t.Any]],
     loaded_params = load_named_server_configs_from_file(tmp_config_path, base_env)
 
     assert "server1" in loaded_params
-    assert loaded_params["server1"].command == "echo"
-    assert loaded_params["server1"].args == ["hello"]
+    assert loaded_params["server1"].stdio_params.command == "echo"
+    assert loaded_params["server1"].stdio_params.args == ["hello"]
     assert (
-        loaded_params["server1"].env == base_env_with_added_env
+        loaded_params["server1"].stdio_params.env == base_env_with_added_env
     )  # Env is a copy, check if it contains base_env items
 
     assert "server2" in loaded_params
-    assert loaded_params["server2"].command == "cat"
-    assert loaded_params["server2"].args == ["file.txt"]
-    assert loaded_params["server2"].env == base_env
+    assert loaded_params["server2"].stdio_params.command == "cat"
+    assert loaded_params["server2"].stdio_params.args == ["file.txt"]
+    assert loaded_params["server2"].stdio_params.env == base_env
 
 
 def test_load_config_with_not_enabled_server(
@@ -88,9 +88,9 @@ def test_load_config_with_not_enabled_server(
     loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
 
     assert "explicitly_enabled_server" in loaded_params
-    assert loaded_params["explicitly_enabled_server"].command == "true_command"
+    assert loaded_params["explicitly_enabled_server"].stdio_params.command == "true_command"
     assert "implicitly_enabled_server" in loaded_params
-    assert loaded_params["implicitly_enabled_server"].command == "another_true_command"
+    assert loaded_params["implicitly_enabled_server"].stdio_params.command == "another_true_command"
     assert "not_enabled_server" not in loaded_params
 
 
@@ -139,10 +139,10 @@ def test_load_example_fetch_config_if_uvx_exists() -> None:
 
     assert "fetch" in loaded_params
     fetch_param = loaded_params["fetch"]
-    assert isinstance(fetch_param, StdioServerParameters)
-    assert fetch_param.command == "uvx"
-    assert fetch_param.args == ["mcp-server-fetch"]
-    assert fetch_param.env == base_env
+    assert isinstance(fetch_param, ServerConfig)
+    assert fetch_param.stdio_params.command == "uvx"
+    assert fetch_param.stdio_params.args == ["mcp-server-fetch"]
+    assert fetch_param.stdio_params.env == base_env
     # The 'timeout' and 'transportType' fields from the config are currently ignored by the loader,
     # so no need to assert them on StdioServerParameters.
 
@@ -247,3 +247,66 @@ def test_config_file_is_empty_string() -> None:
         path = Path(tmp_config_path)
         if path.exists():
             path.unlink()
+
+
+def test_env_var_expansion_in_config(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that environment variables in config values are expanded."""
+    monkeypatch.setenv("MY_TEST_VAR", "/expanded/path")
+    config_content = {
+        "mcpServers": {
+            "server1": {
+                "command": "echo",
+                "env": {"DATA_DIR": "$MY_TEST_VAR/data", "STATIC": "no_expansion"},
+            },
+        },
+    }
+    tmp_config_path = create_temp_config_file(config_content)
+    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+
+    assert loaded_params["server1"].stdio_params.env is not None
+    assert loaded_params["server1"].stdio_params.env["DATA_DIR"] == "/expanded/path/data"
+    assert loaded_params["server1"].stdio_params.env["STATIC"] == "no_expansion"
+
+
+def test_env_var_expansion_with_braces(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that ${VAR} syntax is expanded in env values."""
+    monkeypatch.setenv("HOME", "/home/testuser")
+    config_content = {
+        "mcpServers": {
+            "server1": {
+                "command": "echo",
+                "env": {"DB_PATH": "${HOME}/.local/share/db.sqlite"},
+            },
+        },
+    }
+    tmp_config_path = create_temp_config_file(config_content)
+    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+
+    assert loaded_params["server1"].stdio_params.env is not None
+    assert loaded_params["server1"].stdio_params.env["DB_PATH"] == "/home/testuser/.local/share/db.sqlite"
+
+
+def test_tilde_expansion_in_env(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+) -> None:
+    """Test that ~ is expanded in env values."""
+    config_content = {
+        "mcpServers": {
+            "server1": {
+                "command": "echo",
+                "env": {"CONFIG": "~/my-config"},
+            },
+        },
+    }
+    tmp_config_path = create_temp_config_file(config_content)
+    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+
+    assert loaded_params["server1"].stdio_params.env is not None
+    assert loaded_params["server1"].stdio_params.env["CONFIG"].startswith("/")
+    assert "~" not in loaded_params["server1"].stdio_params.env["CONFIG"]

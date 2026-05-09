@@ -330,7 +330,7 @@ async def test_run_mcp_server_with_named_servers(
         patch("mcp_proxy.mcp_server.logger") as mock_logger,
     ):
         # Setup mocks
-        mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
+        mock_stdio_context, mock_session_context, _mock_session, mock_http_manager, mock_routes = (
             setup_async_context_mocks()
         )
         mock_stdio_client.return_value = mock_stdio_context
@@ -387,7 +387,7 @@ async def test_run_mcp_server_with_cors_middleware(
         patch("uvicorn.Server") as mock_uvicorn_server,
     ):
         # Setup mocks
-        mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
+        mock_stdio_context, mock_session_context, _mock_session, mock_http_manager, mock_routes = (
             setup_async_context_mocks()
         )
         mock_stdio_client.return_value = mock_stdio_context
@@ -435,7 +435,7 @@ async def test_run_mcp_server_custom_expose_headers(
         (
             mock_stdio_context,
             mock_session_context,
-            mock_session,
+            _mock_session,
             mock_http_manager,
             mock_routes,
         ) = setup_async_context_mocks()
@@ -476,7 +476,7 @@ async def test_run_mcp_server_debug_mode(
         patch("uvicorn.Server") as mock_uvicorn_server,
     ):
         # Setup mocks
-        mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
+        mock_stdio_context, mock_session_context, _mock_session, mock_http_manager, mock_routes = (
             setup_async_context_mocks()
         )
         mock_stdio_client.return_value = mock_stdio_context
@@ -516,7 +516,7 @@ async def test_run_mcp_server_stateless_mode(
         patch("uvicorn.Server") as mock_uvicorn_server,
     ):
         # Setup mocks
-        mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
+        mock_stdio_context, mock_session_context, _mock_session, mock_http_manager, mock_routes = (
             setup_async_context_mocks()
         )
         mock_stdio_client.return_value = mock_stdio_context
@@ -553,7 +553,7 @@ async def test_run_mcp_server_uvicorn_config(
         patch("uvicorn.Server") as mock_uvicorn_server,
     ):
         # Setup mocks
-        mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
+        mock_stdio_context, mock_session_context, _mock_session, mock_http_manager, mock_routes = (
             setup_async_context_mocks()
         )
         mock_stdio_client.return_value = mock_stdio_context
@@ -601,7 +601,7 @@ async def test_run_mcp_server_global_status_updates(
         patch("uvicorn.Server") as mock_uvicorn_server,
     ):
         # Setup mocks
-        mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
+        mock_stdio_context, mock_session_context, _mock_session, mock_http_manager, mock_routes = (
             setup_async_context_mocks()
         )
         mock_stdio_client.return_value = mock_stdio_context
@@ -620,8 +620,14 @@ async def test_run_mcp_server_global_status_updates(
         # Verify global status was updated
         assert "default" in _global_status["server_instances"]
         assert "test_server" in _global_status["server_instances"]
-        assert _global_status["server_instances"]["default"] == "configured"
-        assert _global_status["server_instances"]["test_server"] == "configured"
+        assert _global_status["server_instances"]["default"] == {
+            "status": "running",
+            "command": mock_stdio_params.command,
+        }
+        assert _global_status["server_instances"]["test_server"] == {
+            "status": "running",
+            "command": mock_stdio_params.command,
+        }
 
 
 async def test_run_mcp_server_sse_url_logging(
@@ -640,7 +646,7 @@ async def test_run_mcp_server_sse_url_logging(
         patch("mcp_proxy.mcp_server.logger") as mock_logger,
     ):
         # Setup mocks
-        mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
+        mock_stdio_context, mock_session_context, _mock_session, mock_http_manager, mock_routes = (
             setup_async_context_mocks()
         )
         mock_stdio_client.return_value = mock_stdio_context
@@ -703,7 +709,7 @@ async def test_run_mcp_server_both_default_and_named_servers(
         patch("mcp_proxy.mcp_server.logger") as mock_logger,
     ):
         # Setup mocks
-        mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
+        mock_stdio_context, mock_session_context, _mock_session, mock_http_manager, mock_routes = (
             setup_async_context_mocks()
         )
         mock_stdio_client.return_value = mock_stdio_context
@@ -738,3 +744,84 @@ async def test_run_mcp_server_both_default_and_named_servers(
         )
 
         mock_server_instance.serve.assert_called_once()
+
+
+async def test_run_mcp_server_named_server_failure_does_not_crash_others(
+    mock_settings: MCPServerSettings,
+    mock_stdio_params: StdioServerParameters,
+) -> None:
+    """Test that a failing named server does not prevent other servers from starting."""
+    named_servers = {
+        "good_server": mock_stdio_params,
+        "bad_server": StdioServerParameters(
+            command="nonexistent_command",
+            args=[],
+            env={},
+            cwd=None,
+        ),
+    }
+
+    call_count = 0
+
+    def stdio_client_side_effect(params: StdioServerParameters) -> t.Any:
+        nonlocal call_count
+        call_count += 1
+        if params.command == "nonexistent_command":
+            raise FileNotFoundError("Command not found: nonexistent_command")
+        mock_stdio_context, _, _, _, _ = setup_async_context_mocks()
+        return mock_stdio_context
+
+    with (
+        patch("mcp_proxy.mcp_server.stdio_client", side_effect=stdio_client_side_effect),
+        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("uvicorn.Server") as mock_uvicorn_server,
+        patch("mcp_proxy.mcp_server.logger") as mock_logger,
+    ):
+        _, mock_session_context, _, mock_http_manager, mock_routes = setup_async_context_mocks()
+        mock_client_session.return_value = mock_session_context
+
+        mock_proxy = AsyncMock()
+        mock_create_proxy.return_value = mock_proxy
+        mock_create_routes.return_value = (mock_routes, mock_http_manager)
+
+        mock_server_instance = AsyncMock()
+        mock_uvicorn_server.return_value = mock_server_instance
+
+        await run_mcp_server(mock_settings, None, named_servers)
+
+        # The good server should have been set up successfully
+        assert mock_create_proxy.call_count == 1
+
+        # The bad server should have been logged as failed
+        mock_logger.exception.assert_called_with(
+            "Failed to start named server '%s'. Skipping this server.",
+            "bad_server",
+        )
+
+        # Server should still be running (serve was called)
+        mock_server_instance.serve.assert_called_once()
+
+
+async def test_run_mcp_server_all_named_servers_fail_no_default(
+    mock_settings: MCPServerSettings,
+) -> None:
+    """Test that proxy exits gracefully when all named servers fail and no default is set."""
+    named_servers = {
+        "bad1": StdioServerParameters(command="bad1", args=[], env={}, cwd=None),
+        "bad2": StdioServerParameters(command="bad2", args=[], env={}, cwd=None),
+    }
+
+    with (
+        patch(
+            "mcp_proxy.mcp_server.stdio_client",
+            side_effect=FileNotFoundError("not found"),
+        ),
+        patch("mcp_proxy.mcp_server.logger") as mock_logger,
+    ):
+        await run_mcp_server(mock_settings, None, named_servers)
+
+        mock_logger.error.assert_called_with(
+            "No servers are running. All named servers failed to start.",
+        )

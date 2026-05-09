@@ -21,9 +21,60 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.types import Receive, Scope, Send
 
+from mcp import types as mcp_types
+
+from .config_loader import ServerConfig
 from .proxy_server import create_proxy_server
+from .rate_limiter import ServerRateLimiter, create_rate_limited_call_tool
 
 logger = logging.getLogger(__name__)
+
+# Paths that bypass API key authentication
+_PUBLIC_PATHS: Final[frozenset[str]] = frozenset({"/health", "/status"})
+
+
+class APIKeyMiddleware:
+    """Starlette middleware that validates Bearer token authentication.
+
+    Skips validation for health/status endpoints and CORS preflight requests.
+    When no api_key is configured, all requests pass through (backward compatible).
+    """
+
+    def __init__(self, app: Any, *, api_key: str) -> None:  # noqa: ANN401
+        """Initialize middleware with ASGI app and API key."""
+        self._app = app
+        self._api_key = api_key
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Validate API key on HTTP requests."""
+        if scope["type"] != "http":
+            await self._app(scope, receive, send)
+            return
+
+        path = scope.get("path", "")
+        method = scope.get("method", "")
+
+        # Skip auth for public paths and CORS preflight
+        if path in _PUBLIC_PATHS or method == "OPTIONS":
+            await self._app(scope, receive, send)
+            return
+
+        # Extract Authorization header
+        headers = dict(scope.get("headers", []))
+        auth_value = headers.get(b"authorization", b"").decode()
+
+        if auth_value == f"Bearer {self._api_key}":
+            await self._app(scope, receive, send)
+            return
+
+        # Reject
+        response = JSONResponse(
+            {"error": "Unauthorized", "message": "Invalid or missing API key"},
+            status_code=401,
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+        await response(scope, receive, send)
+
 
 DEFAULT_EXPOSE_HEADERS: Final[tuple[str, ...]] = ("mcp-session-id",)
 
@@ -42,6 +93,7 @@ class MCPServerSettings:
     allow_origins: list[str] | None = None
     expose_headers: list[str] = field(default_factory=_default_expose_headers)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    api_key: str | None = None
 
 
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
@@ -70,7 +122,23 @@ HTTP_METHODS = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRA
 
 async def _handle_status(_: Request) -> Response:
     """Global health check and service usage monitoring endpoint."""
-    return JSONResponse(_global_status)
+    healthy_count = sum(
+        1
+        for s in _global_status["server_instances"].values()
+        if isinstance(s, dict) and s.get("status") == "running"
+    )
+    total_count = len(_global_status["server_instances"])
+    is_healthy = healthy_count > 0 or total_count == 0
+    status_code = 200 if is_healthy else 503
+    return JSONResponse(
+        {
+            **_global_status,
+            "healthy": is_healthy,
+            "servers_running": healthy_count,
+            "servers_total": total_count,
+        },
+        status_code=status_code,
+    )
 
 
 def create_single_instance_routes(
@@ -149,13 +217,20 @@ async def run_mcp_server(
     mcp_settings: MCPServerSettings,
     default_server_params: StdioServerParameters | None = None,
     named_server_params: dict[str, StdioServerParameters] | None = None,
+    named_server_configs: dict[str, ServerConfig] | None = None,
 ) -> None:
     """Run stdio client(s) and expose an MCP server with multiple possible backends."""
-    if named_server_params is None:
-        named_server_params = {}
+    # Support both old-style named_server_params and new ServerConfig
+    # Use a local copy to avoid modifying the caller's dictionary
+    effective_configs: dict[str, ServerConfig] = (named_server_configs or {}).copy()
+    if named_server_params:
+        for name, params in named_server_params.items():
+            if name not in effective_configs:
+                effective_configs[name] = ServerConfig(stdio_params=params)
 
     all_routes: list[BaseRoute] = [
         Route("/status", endpoint=_handle_status),  # Global status endpoint
+        Route("/health", endpoint=_handle_status),  # Health check alias
     ]
     # Use AsyncExitStack to manage lifecycles of multiple components
     async with contextlib.AsyncExitStack() as stack:
@@ -184,35 +259,89 @@ async def run_mcp_server(
             )
             await stack.enter_async_context(http_manager.run())  # Manage lifespan by calling run()
             all_routes.extend(instance_routes)
-            _global_status["server_instances"]["default"] = "configured"
+            _global_status["server_instances"]["default"] = {
+                "status": "running",
+                "command": default_server_params.command,
+            }
 
         # Setup named servers
-        for name, params in named_server_params.items():
-            logger.info(
-                "Setting up named server '%s': %s %s",
-                name,
-                params.command,
-                " ".join(params.args),
+        failed_servers: list[str] = []
+        for name, server_config in effective_configs.items():
+            params = server_config.stdio_params
+            try:
+                logger.info(
+                    "Setting up named server '%s': %s %s",
+                    name,
+                    params.command,
+                    " ".join(params.args),
+                )
+                stdio_streams_named = await stack.enter_async_context(stdio_client(params))
+                session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
+                proxy_named = await create_proxy_server(session_named)
+
+                # Apply rate limiting if configured
+                if mcp_types.CallToolRequest in proxy_named.request_handlers:
+                    rate_limiter = ServerRateLimiter(
+                        max_concurrent=server_config.max_concurrent,
+                        max_wait_seconds=server_config.max_wait_seconds,
+                    )
+                    original_handler = proxy_named.request_handlers[mcp_types.CallToolRequest]
+                    proxy_named.request_handlers[mcp_types.CallToolRequest] = (
+                        create_rate_limited_call_tool(
+                            original_handler,
+                            rate_limiter,
+                            name,
+                        )
+                    )
+                    logger.info(
+                        "Rate limiting enabled for '%s': max_concurrent=%d, max_wait=%.1fs",
+                        name,
+                        server_config.max_concurrent,
+                        server_config.max_wait_seconds,
+                    )
+
+                instance_routes_named, http_manager_named = create_single_instance_routes(
+                    proxy_named,
+                    stateless_instance=mcp_settings.stateless,
+                )
+                await stack.enter_async_context(
+                    http_manager_named.run(),
+                )  # Manage lifespan by calling run()
+
+                # Mount these routes under /servers/<name>/
+                server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)
+                all_routes.append(server_mount)
+                _global_status["server_instances"][name] = {
+                    "status": "running",
+                    "command": params.command,
+                }
+            except Exception:
+                logger.exception(
+                    "Failed to start named server '%s'. Skipping this server.",
+                    name,
+                )
+                _global_status["server_instances"][name] = {
+                    "status": "failed",
+                    "command": params.command,
+                }
+                failed_servers.append(name)
+
+        if failed_servers:
+            logger.warning(
+                "The following named servers failed to start and were skipped: %s",
+                ", ".join(failed_servers),
             )
-            stdio_streams_named = await stack.enter_async_context(stdio_client(params))
-            session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
-            proxy_named = await create_proxy_server(session_named)
 
-            instance_routes_named, http_manager_named = create_single_instance_routes(
-                proxy_named,
-                stateless_instance=mcp_settings.stateless,
-            )
-            await stack.enter_async_context(
-                http_manager_named.run(),
-            )  # Manage lifespan by calling run()
-
-            # Mount these routes under /servers/<name>/
-            server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)
-            all_routes.append(server_mount)
-            _global_status["server_instances"][name] = "configured"
-
-        if not default_server_params and not named_server_params:
+        if not default_server_params and not effective_configs:
             logger.error("No servers configured to run.")
+            return
+
+        # Check if all named servers failed and there's no default server
+        has_running_named = len(effective_configs) > len(failed_servers)
+        if not default_server_params and not has_running_named:
+            logger.error(
+                "No servers are running. All named servers failed to start.",
+            )
             return
 
         middleware: list[Middleware] = []
@@ -226,6 +355,12 @@ async def run_mcp_server(
                     expose_headers=mcp_settings.expose_headers,
                 ),
             )
+
+        if mcp_settings.api_key:
+            middleware.append(
+                Middleware(APIKeyMiddleware, api_key=mcp_settings.api_key),
+            )
+            logger.info("API key authentication enabled")
 
         starlette_app = Starlette(
             debug=(mcp_settings.log_level == "DEBUG"),
@@ -253,7 +388,7 @@ async def run_mcp_server(
             sse_urls.append(f"{base_url}/sse")
 
         # Add named servers
-        sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
+        sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in effective_configs])
 
         # Display the SSE URLs prominently
         if sse_urls:

@@ -19,7 +19,7 @@ from importlib.metadata import version
 from httpx_auth import OAuth2ClientCredentials
 from mcp.client.stdio import StdioServerParameters
 
-from .config_loader import load_named_server_configs_from_file
+from .config_loader import ServerConfig, load_named_server_configs_from_file
 from .mcp_server import DEFAULT_EXPOSE_HEADERS, MCPServerSettings, run_mcp_server
 from .sse_client import run_sse_client
 from .streamablehttp_client import run_streamablehttp_client
@@ -273,6 +273,17 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
             "Defaults to 'Mcp-Session-Id'. Can be used multiple times."
         ),
     )
+    mcp_server_group.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        metavar="KEY",
+        help=(
+            "API key to require for all requests (except /health, /status, and CORS preflight). "
+            "Clients must send 'Authorization: Bearer <KEY>'. "
+            "Can also be set via MCP_PROXY_API_KEY environment variable."
+        ),
+    )
 
 
 def _setup_logging(*, level: str, debug: bool) -> logging.Logger:
@@ -349,13 +360,15 @@ def _configure_default_server(
         return None
 
     default_server_env = base_env.copy()
-    default_server_env.update(dict(args_parsed.env))  # Specific env vars for default server
+    default_server_env.update(
+        {k: os.path.expandvars(os.path.expanduser(v)) for k, v in args_parsed.env},
+    )
 
     default_stdio_params = StdioServerParameters(
         command=args_parsed.command_or_url,
         args=args_parsed.args,
         env=default_server_env,
-        cwd=args_parsed.cwd if args_parsed.cwd else None,
+        cwd=args_parsed.cwd or None,
     )
     logger.info(
         "Configured default server: %s %s",
@@ -369,7 +382,7 @@ def _load_named_servers_from_config(
     config_path: str,
     base_env: dict[str, str],
     logger: logging.Logger,
-) -> dict[str, StdioServerParameters]:
+) -> dict[str, ServerConfig]:
     """Load named server configurations from a file."""
     try:
         return load_named_server_configs_from_file(config_path, base_env)
@@ -436,6 +449,7 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         if not args_parsed.expose_headers
         else list(args_parsed.expose_headers)
     )
+    api_key = args_parsed.api_key or os.getenv("MCP_PROXY_API_KEY")
     return MCPServerSettings(
         bind_host=args_parsed.host if args_parsed.host is not None else args_parsed.sse_host,
         port=args_parsed.port if args_parsed.port is not None else args_parsed.sse_port,
@@ -443,6 +457,7 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         allow_origins=args_parsed.allow_origin if len(args_parsed.allow_origin) > 0 else None,
         expose_headers=expose_headers,
         log_level="DEBUG" if args_parsed.debug else args_parsed.log_level,
+        api_key=api_key,
     )
 
 
@@ -485,13 +500,13 @@ def main() -> None:
     default_stdio_params = _configure_default_server(args_parsed, base_env, logger)
 
     # Configure named servers
-    named_stdio_params: dict[str, StdioServerParameters] = {}
+    named_server_configs: dict[str, ServerConfig] = {}
     if args_parsed.named_server_config:
         if args_parsed.named_server_definitions:
             logger.warning(
                 "--named-server CLI arguments are ignored when --named-server-config is provided.",
             )
-        named_stdio_params = _load_named_servers_from_config(
+        named_server_configs = _load_named_servers_from_config(
             args_parsed.named_server_config,
             base_env,
             logger,
@@ -502,9 +517,13 @@ def main() -> None:
             base_env,
             logger,
         )
+        # Wrap CLI-defined servers in ServerConfig (no rate limiting config from CLI)
+        named_server_configs = {
+            name: ServerConfig(stdio_params=params) for name, params in named_stdio_params.items()
+        }
 
     # Ensure at least one server is configured
-    if not default_stdio_params and not named_stdio_params:
+    if not default_stdio_params and not named_server_configs:
         parser.print_help()
         logger.error(
             "No stdio servers configured. Provide a default command or use --named-server.",
@@ -516,7 +535,7 @@ def main() -> None:
     asyncio.run(
         run_mcp_server(
             default_server_params=default_stdio_params,
-            named_server_params=named_stdio_params,
+            named_server_configs=named_server_configs,
             mcp_settings=mcp_settings,
         ),
     )
