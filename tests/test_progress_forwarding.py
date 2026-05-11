@@ -56,6 +56,7 @@ async def test_progress_callback_passed_to_remote_app(
     Strategy: Mock the remote_app.call_tool to capture the progress_callback
     parameter and verify it's not None when progressToken is present.
     """
+
     # Set up the tool handler
     @mock_server.call_tool()  # type: ignore[misc]
     async def _call_tool(
@@ -108,6 +109,7 @@ async def test_progress_callback_not_created_without_token(
     Strategy: Mock the remote_app.call_tool to capture the progress_callback
     parameter and verify it's None when no progressToken is present.
     """
+
     # Set up the tool handler
     @mock_server.call_tool()  # type: ignore[misc]
     async def _call_tool(
@@ -163,7 +165,9 @@ async def test_progress_forwarder_callback_functionality() -> None:
     progress_token = 99
 
     async def progress_forwarder(
-        progress: float, total: float | None, message: str | None,
+        progress: float,
+        total: float | None,
+        message: str | None,
     ) -> None:
         """Simulated progress forwarder from proxy_server.py."""
         await mock_context.session.send_progress_notification(
@@ -330,4 +334,3 @@ async def test_progress_callback_creation_logic() -> None:
         else:
             assert progress_callback is None
 
-# Made with Bob

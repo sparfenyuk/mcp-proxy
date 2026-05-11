@@ -652,7 +652,9 @@ async def test_call_tool_with_none_meta_parameter(
 
         # Call the tool with None meta parameter
         call_tool_result = await session.call_tool(
-            "tool", {"input1": "test-value"}, meta=None,
+            "tool",
+            {"input1": "test-value"},
+            meta=None,
         )
 
         # Verify the tool was called successfully
