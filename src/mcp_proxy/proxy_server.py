@@ -108,7 +108,9 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
                     # Note: The callback receives individual parameters, not a
                     # ProgressNotificationParams object
                     async def progress_forwarder(
-                        progress: float, total: float | None, message: str | None,
+                        progress: float,
+                        total: float | None,
+                        message: str | None,
                     ) -> None:
                         # Forward progress notification back to parent via server session
                         await ctx.session.send_progress_notification(
