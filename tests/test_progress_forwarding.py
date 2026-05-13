@@ -333,4 +333,3 @@ async def test_progress_callback_creation_logic() -> None:
             assert progress_callback is not None
         else:
             assert progress_callback is None
-
