@@ -355,7 +355,7 @@ def _configure_default_server(
         command=args_parsed.command_or_url,
         args=args_parsed.args,
         env=default_server_env,
-        cwd=args_parsed.cwd if args_parsed.cwd else None,
+        cwd=args_parsed.cwd or None,
     )
     logger.info(
         "Configured default server: %s %s",
