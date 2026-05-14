@@ -273,6 +273,17 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
             "Defaults to 'Mcp-Session-Id'. Can be used multiple times."
         ),
     )
+    mcp_server_group.add_argument(
+        "--auth-bearer-token",
+        default=None,
+        metavar="TOKEN",
+        help=(
+            "Require an `Authorization: Bearer <token>` header on all routes "
+            "except `/status`. If omitted, falls back to the "
+            "`MCP_PROXY_AUTH_TOKEN` environment variable. When neither is set, "
+            "authentication is disabled (default)."
+        ),
+    )
 
 
 def _setup_logging(*, level: str, debug: bool) -> logging.Logger:
@@ -436,6 +447,9 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         if not args_parsed.expose_headers
         else list(args_parsed.expose_headers)
     )
+    auth_bearer_token = args_parsed.auth_bearer_token or os.getenv(
+        "MCP_PROXY_AUTH_TOKEN",
+    )
     return MCPServerSettings(
         bind_host=args_parsed.host if args_parsed.host is not None else args_parsed.sse_host,
         port=args_parsed.port if args_parsed.port is not None else args_parsed.sse_port,
@@ -443,6 +457,7 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         allow_origins=args_parsed.allow_origin if len(args_parsed.allow_origin) > 0 else None,
         expose_headers=expose_headers,
         log_level="DEBUG" if args_parsed.debug else args_parsed.log_level,
+        auth_bearer_token=auth_bearer_token or None,
     )
 
 
