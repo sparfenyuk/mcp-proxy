@@ -177,6 +177,7 @@ If a default server is specified (the `command_or_url` argument without `--named
 
 Named servers (whether defined by `--named-server` or `--named-server-config`) will be accessible under `/servers/<server-name>/` (e.g., `http://127.0.0.1:8080/servers/fetch1/sse`).
 The `/status` endpoint provides global status.
+If a named server fails to start, it is marked as `failed` in `/status` and the remaining named servers continue to run.
 
 **JSON Configuration File Format for `--named-server-config`:**
 

@@ -22,6 +22,7 @@ from starlette.middleware.cors import CORSMiddleware
 from mcp_proxy.mcp_server import (
     DEFAULT_EXPOSE_HEADERS,
     MCPServerSettings,
+    _global_status,
     create_single_instance_routes,
     run_mcp_server,
 )
@@ -254,6 +255,13 @@ def setup_async_context_mocks() -> tuple[
     )
 
 
+@contextlib.asynccontextmanager
+async def failing_async_context() -> t.AsyncIterator[tuple[AsyncMock, AsyncMock]]:
+    """Async context manager that fails while entering."""
+    raise RuntimeError("server failed")
+    yield (AsyncMock(), AsyncMock())
+
+
 async def test_run_mcp_server_no_servers_configured(mock_settings: MCPServerSettings) -> None:
     """Test run_mcp_server when no servers are configured."""
     with patch("mcp_proxy.mcp_server.logger") as mock_logger:
@@ -366,6 +374,74 @@ async def test_run_mcp_server_with_named_servers(
         )
 
         mock_server_instance.serve.assert_called_once()
+
+
+async def test_run_mcp_server_skips_failed_named_server(
+    mock_settings: MCPServerSettings,
+    mock_stdio_params: StdioServerParameters,
+) -> None:
+    """Test one failed named server does not prevent healthy named servers from serving."""
+    _global_status["server_instances"].clear()
+    bad_params = StdioServerParameters(command="missing-command", args=[])
+    named_servers = {"good": mock_stdio_params, "bad": bad_params}
+
+    with (
+        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("uvicorn.Server") as mock_uvicorn_server,
+        patch("mcp_proxy.mcp_server.logger") as mock_logger,
+    ):
+        mock_stdio_context, mock_session_context, mock_session, mock_http_manager, mock_routes = (
+            setup_async_context_mocks()
+        )
+        mock_stdio_client.side_effect = [mock_stdio_context, failing_async_context()]
+        mock_client_session.return_value = mock_session_context
+
+        mock_proxy = AsyncMock()
+        mock_create_proxy.return_value = mock_proxy
+        mock_create_routes.return_value = (mock_routes, mock_http_manager)
+
+        mock_server_instance = AsyncMock()
+        mock_uvicorn_server.return_value = mock_server_instance
+
+        await run_mcp_server(mock_settings, None, named_servers)
+
+        assert _global_status["server_instances"]["good"] == "configured"
+        assert _global_status["server_instances"]["bad"] == "failed"
+        mock_create_proxy.assert_called_once_with(mock_session)
+        mock_server_instance.serve.assert_called_once()
+        mock_logger.exception.assert_called_once_with(
+            "Failed to set up named server '%s'. Skipping.",
+            "bad",
+        )
+        mock_logger.info.assert_any_call(
+            "  - %s",
+            f"http://{mock_settings.bind_host}:{mock_settings.port}/servers/good/sse",
+        )
+
+
+async def test_run_mcp_server_returns_when_all_named_servers_fail(
+    mock_settings: MCPServerSettings,
+    mock_stdio_params: StdioServerParameters,
+) -> None:
+    """Test proxy exits without serving when every named server fails."""
+    _global_status["server_instances"].clear()
+    named_servers = {"bad": mock_stdio_params}
+
+    with (
+        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
+        patch("uvicorn.Server") as mock_uvicorn_server,
+        patch("mcp_proxy.mcp_server.logger") as mock_logger,
+    ):
+        mock_stdio_client.return_value = failing_async_context()
+
+        await run_mcp_server(mock_settings, None, named_servers)
+
+        assert _global_status["server_instances"]["bad"] == "failed"
+        mock_uvicorn_server.assert_not_called()
+        mock_logger.error.assert_called_once_with("No servers configured to run.")
 
 
 async def test_run_mcp_server_with_cors_middleware(
@@ -586,8 +662,6 @@ async def test_run_mcp_server_global_status_updates(
     mock_stdio_params: StdioServerParameters,
 ) -> None:
     """Test run_mcp_server updates global status correctly."""
-    from mcp_proxy.mcp_server import _global_status  # noqa: PLC0415
-
     # Clear global status before test
     _global_status["server_instances"].clear()
 
