@@ -13,14 +13,68 @@ from mcp.server.lowlevel.server import request_ctx
 logger = logging.getLogger(__name__)
 
 
-async def create_proxy_server(remote_app: ClientSession) -> server.Server[object]:  # noqa: C901, PLR0915
-    """Create a server instance from a remote app."""
+def create_roots_forwarding_callback(
+    proxy_app: server.Server[object],
+) -> t.Callable[..., t.Awaitable[types.ListRootsResult | types.ErrorData]]:
+    """Create a list_roots callback that forwards roots/list requests to the upstream client.
+
+    When a downstream server sends a roots/list request, this callback forwards it
+    through the proxy's upstream session to the connected client.
+
+    The proxy_app's request_context is only available during active request handling
+    (tool calls, resource reads, etc.), which is when downstream servers typically
+    request roots. If a roots/list request arrives outside of an active request
+    context, an INVALID_REQUEST error is returned.
+    """
+
+    async def _forward_roots(_ctx: t.Any) -> types.ListRootsResult | types.ErrorData:  # noqa: ANN401
+        try:
+            result = await proxy_app.request_context.session.list_roots()
+            return result
+        except LookupError:
+            # request_context not set — no active upstream session
+            logger.warning("roots/list requested but no active upstream session available")
+            return types.ErrorData(
+                code=types.INVALID_REQUEST,
+                message="No active upstream session to forward roots/list request",
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Failed to forward roots/list to upstream client: %s", e)
+            return types.ErrorData(
+                code=types.INTERNAL_ERROR,
+                message=f"Failed to forward roots/list: {e}",
+            )
+
+    return _forward_roots
+
+
+async def create_proxy_server(
+    remote_app: ClientSession,
+) -> server.Server[object]:  # noqa: C901, PLR0915
+    """Create a server instance from a remote app.
+
+    Roots/list requests from the downstream server are forwarded through the proxy
+    server's upstream session to the connected client. The callback is injected into
+    remote_app before initialize() so that the downstream server sees roots capability
+    advertised during the handshake.
+    """
+    # Create the proxy server first — needed to build the roots forwarding callback
+    # before we advertise capabilities to the downstream server via initialize().
+    app: server.Server[object] = server.Server(name="mcp-proxy")
+
+    # Wire roots forwarding: downstream server → proxy → upstream client.
+    # Must happen before initialize() so the ClientSession advertises roots
+    # capability to the downstream server during the handshake.
+    callback = create_roots_forwarding_callback(app)
+    remote_app._list_roots_callback = callback  # noqa: SLF001
+
     logger.debug("Sending initialization request to remote MCP server...")
     response = await remote_app.initialize()
     capabilities = response.capabilities
 
+    # Update the server name now that we know it from the downstream server
+    app.name = response.serverInfo.name
     logger.debug("Configuring proxied MCP server...")
-    app: server.Server[object] = server.Server(name=response.serverInfo.name)
 
     if capabilities.prompts:
         logger.debug("Capabilities: adding Prompts...")
@@ -159,3 +213,4 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
     app.request_handlers[types.CompleteRequest] = _complete
 
     return app
+
