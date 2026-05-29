@@ -21,6 +21,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.types import Receive, Scope, Send
 
+from .notification_filter import filter_unknown_notifications
 from .proxy_server import create_proxy_server
 
 logger = logging.getLogger(__name__)
@@ -176,7 +177,14 @@ async def run_mcp_server(
                 " ".join(default_server_params.args),
             )
             stdio_streams = await stack.enter_async_context(stdio_client(default_server_params))
-            session = await stack.enter_async_context(ClientSession(*stdio_streams))
+            # Drop unknown notifications (e.g. LSP-style ``window/logMessage``) before
+            # they reach ``ClientSession`` and crash the proxy via an unhandled
+            # Pydantic ``ValidationError`` inside the anyio ``TaskGroup`` wrapping
+            # ``stdio_client``. See ``notification_filter`` for details.
+            filtered_streams = await stack.enter_async_context(
+                filter_unknown_notifications(*stdio_streams),
+            )
+            session = await stack.enter_async_context(ClientSession(*filtered_streams))
             proxy = await create_proxy_server(session)
 
             instance_routes, http_manager = create_single_instance_routes(
@@ -196,7 +204,14 @@ async def run_mcp_server(
                 " ".join(params.args),
             )
             stdio_streams_named = await stack.enter_async_context(stdio_client(params))
-            session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
+            # See note above on ``filter_unknown_notifications`` -- per-server
+            # tolerance for ``window/logMessage`` and other non-MCP notifications.
+            filtered_streams_named = await stack.enter_async_context(
+                filter_unknown_notifications(*stdio_streams_named),
+            )
+            session_named = await stack.enter_async_context(
+                ClientSession(*filtered_streams_named),
+            )
             proxy_named = await create_proxy_server(session_named)
 
             instance_routes_named, http_manager_named = create_single_instance_routes(
