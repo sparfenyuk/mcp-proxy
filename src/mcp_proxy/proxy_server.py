@@ -20,7 +20,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
     capabilities = response.capabilities
 
     logger.debug("Configuring proxied MCP server...")
-    app: server.Server[object] = server.Server(name=response.serverInfo.name)
+    app: server.Server[object] = server.Server(name=response.serverInfo.name, instructions=response.instructions)
 
     if capabilities.prompts:
         logger.debug("Capabilities: adding Prompts...")
