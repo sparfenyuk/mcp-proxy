@@ -23,6 +23,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
     app: server.Server[object] = server.Server(
         name=response.serverInfo.name,
         version=response.serverInfo.version,
+        instructions=response.instructions,
     )
 
     if capabilities.prompts:
