@@ -92,6 +92,33 @@ For Claude Desktop, the configuration entry can look like this:
 }
 ```
 
+For a Streamable HTTP server that expects a bearer token, pass
+`--transport=streamablehttp` and the header pair. For example, Xquik exposes a
+remote MCP endpoint for X data workflows:
+
+```json
+{
+  "mcpServers": {
+    "xquik": {
+      "command": "mcp-proxy",
+      "args": [
+        "--transport=streamablehttp",
+        "--headers",
+        "Authorization",
+        "Bearer YOUR_XQUIK_API_KEY",
+        "https://xquik.com/mcp"
+      ]
+    }
+  }
+}
+```
+
+See the [Xquik MCP guide](https://docs.xquik.com/mcp/overview) for available
+tools and authentication options.
+
+Xquik is an independent third-party service. Not affiliated with X Corp.
+"Twitter" and "X" are trademarks of X Corp.
+
 ## 2. SSE to stdio
 
 Run a proxy server exposing a SSE server that connects to a local stdio server.
