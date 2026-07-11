@@ -38,6 +38,11 @@ def custom_httpx_client(  # noqa: C901
         "follow_redirects": True,
     }
 
+    # Dynamically load proxy from environment variables
+    proxy_url = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    if proxy_url:
+        kwargs["proxy"] = proxy_url
+
     # Handle timeout
     if timeout is None:
         kwargs["timeout"] = httpx.Timeout(30.0)
