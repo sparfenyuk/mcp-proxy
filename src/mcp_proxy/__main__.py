@@ -513,13 +513,17 @@ def main() -> None:
 
     # Create MCP server settings and run the server
     mcp_settings = _create_mcp_settings(args_parsed)
-    asyncio.run(
-        run_mcp_server(
-            default_server_params=default_stdio_params,
-            named_server_params=named_stdio_params,
-            mcp_settings=mcp_settings,
-        ),
-    )
+    try:
+        asyncio.run(
+            run_mcp_server(
+                default_server_params=default_stdio_params,
+                named_server_params=named_stdio_params,
+                mcp_settings=mcp_settings,
+            ),
+        )
+    except RuntimeError as exc:
+        logger.error("%s", exc)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
