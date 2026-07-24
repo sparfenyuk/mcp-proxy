@@ -2,6 +2,8 @@
 
 import contextlib
 import logging
+import socket
+from errno import EADDRINUSE
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -71,6 +73,39 @@ HTTP_METHODS = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT", "TRA
 async def _handle_status(_: Request) -> Response:
     """Global health check and service usage monitoring endpoint."""
     return JSONResponse(_global_status)
+
+
+def _assert_bind_address_available(host: str, port: int) -> None:
+    """Validate that the target host/port can be bound before starting child servers."""
+    test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        test_socket.bind((host, port))
+    except OSError as exc:
+        err_code = exc.winerror if getattr(exc, "winerror", None) is not None else exc.errno
+        if err_code in {EADDRINUSE, 10048}:
+            msg = (
+                f"Cannot start mcp_proxy on {host}:{port}. "
+                "Address is already in use. Stop the existing process or choose another port."
+            )
+            raise RuntimeError(msg) from exc
+        raise
+    finally:
+        test_socket.close()
+
+
+def _raise_missing_stdio_command_error(
+    server_name: str,
+    params: StdioServerParameters,
+    exc: FileNotFoundError,
+) -> None:
+    command_with_args = " ".join([params.command, *params.args]).strip()
+    msg = (
+        f"Failed to start stdio server '{server_name}'. "
+        f"Command not found: {params.command!r}. "
+        f"Full command: {command_with_args}. "
+        "Ensure the executable is installed and available on PATH for the mcp_proxy process."
+    )
+    raise RuntimeError(msg) from exc
 
 
 def create_single_instance_routes(
@@ -155,6 +190,8 @@ async def run_mcp_server(
     if named_server_params is None:
         named_server_params = {}
 
+    _assert_bind_address_available(mcp_settings.bind_host, mcp_settings.port)
+
     all_routes: list[BaseRoute] = [
         Route("/status", endpoint=_handle_status),  # Global status endpoint
     ]
@@ -175,7 +212,10 @@ async def run_mcp_server(
                 default_server_params.command,
                 " ".join(default_server_params.args),
             )
-            stdio_streams = await stack.enter_async_context(stdio_client(default_server_params))
+            try:
+                stdio_streams = await stack.enter_async_context(stdio_client(default_server_params))
+            except FileNotFoundError as exc:
+                _raise_missing_stdio_command_error("default", default_server_params, exc)
             session = await stack.enter_async_context(ClientSession(*stdio_streams))
             proxy = await create_proxy_server(session)
 
@@ -195,7 +235,10 @@ async def run_mcp_server(
                 params.command,
                 " ".join(params.args),
             )
-            stdio_streams_named = await stack.enter_async_context(stdio_client(params))
+            try:
+                stdio_streams_named = await stack.enter_async_context(stdio_client(params))
+            except FileNotFoundError as exc:
+                _raise_missing_stdio_command_error(name, params, exc)
             session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
             proxy_named = await create_proxy_server(session_named)
 
