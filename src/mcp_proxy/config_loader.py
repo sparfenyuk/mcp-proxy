@@ -67,9 +67,11 @@ def load_named_server_configs_from_file(
             logger.info("Named server '%s' from config is not enabled. Skipping.", name)
             continue
 
-        command = server_config.get("command")
+        command_raw = server_config.get("command")
         command_args = server_config.get("args", [])
         env = server_config.get("env", {})
+
+        command = command_raw.strip() if isinstance(command_raw, str) else command_raw
 
         if not command:
             logger.warning(
@@ -83,6 +85,8 @@ def load_named_server_configs_from_file(
                 name,
             )
             continue
+
+        command_args = [str(arg).strip() for arg in command_args]
 
         new_env = base_env.copy()
         new_env.update(env)
