@@ -1,5 +1,7 @@
 # mcp-proxy
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fsparfenyuk%2Fmcp-proxy.svg)](https://mcptoplist.com/server/glama%2Fsparfenyuk%2Fmcp-proxy)
+
 ![GitHub License](https://img.shields.io/github/license/sparfenyuk/mcp-proxy)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/mcp-proxy)
 ![PyPI - Downloads](https://img.shields.io/pypi/dm/mcp-proxy)
