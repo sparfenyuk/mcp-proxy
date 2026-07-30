@@ -2,7 +2,7 @@
 
 import contextlib
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Final, Literal
@@ -30,6 +30,22 @@ DEFAULT_EXPOSE_HEADERS: Final[tuple[str, ...]] = ("mcp-session-id",)
 
 def _default_expose_headers() -> list[str]:
     return list(DEFAULT_EXPOSE_HEADERS)
+
+
+def _server_endpoint_urls(
+    base_url: str,
+    *,
+    has_default_server: bool,
+    named_server_names: Iterable[str],
+) -> list[tuple[str, str]]:
+    server_paths = [""] if has_default_server else []
+    server_paths.extend(f"/servers/{name}" for name in named_server_names)
+
+    return [
+        (transport, f"{base_url}{server_path}{endpoint_path}")
+        for server_path in server_paths
+        for transport, endpoint_path in (("SSE", "/sse"), ("Streamable HTTP", "/mcp"))
+    ]
 
 
 @dataclass
@@ -245,23 +261,19 @@ async def run_mcp_server(
         )
         http_server = uvicorn.Server(config)
 
-        # Print out the SSE URLs for all configured servers
+        # Print out the URLs for all configured servers
         base_url = f"http://{mcp_settings.bind_host}:{mcp_settings.port}"
-        sse_urls = []
+        endpoint_urls = _server_endpoint_urls(
+            base_url,
+            has_default_server=default_server_params is not None,
+            named_server_names=named_server_params,
+        )
 
-        # Add default server if configured
-        if default_server_params:
-            sse_urls.append(f"{base_url}/sse")
-
-        # Add named servers
-        sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
-
-        # Display the SSE URLs prominently
-        if sse_urls:
-            # Using print directly for user visibility, with noqa to ignore linter warnings
-            logger.info("Serving MCP Servers via SSE:")
-            for url in sse_urls:
-                logger.info("  - %s", url)
+        # Display the endpoint URLs prominently
+        if endpoint_urls:
+            logger.info("Serving MCP Servers:")
+            for transport, url in endpoint_urls:
+                logger.info("  - %s: %s", transport, url)
 
         logger.debug(
             "Serving incoming MCP requests on %s:%s",

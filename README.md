@@ -10,7 +10,7 @@
   - [1. stdio to SSE/StreamableHTTP](#1-stdio-to-ssestreamablehttp)
     - [1.1 Configuration](#11-configuration)
     - [1.2 Example usage](#12-example-usage)
-  - [2. SSE to stdio](#2-sse-to-stdio)
+  - [2. SSE/StreamableHTTP to stdio](#2-ssestreamablehttp-to-stdio)
     - [2.1 Configuration](#21-configuration)
     - [2.2 Example usage](#22-example-usage)
   - [Named Servers](#named-servers)
@@ -92,16 +92,45 @@ For Claude Desktop, the configuration entry can look like this:
 }
 ```
 
-## 2. SSE to stdio
+For a Streamable HTTP server that expects a bearer token, pass
+`--transport=streamablehttp` and the header pair. For example, Xquik exposes a
+remote MCP endpoint for X data workflows:
 
-Run a proxy server exposing a SSE server that connects to a local stdio server.
+```json
+{
+  "mcpServers": {
+    "xquik": {
+      "command": "mcp-proxy",
+      "args": [
+        "--transport=streamablehttp",
+        "--headers",
+        "Authorization",
+        "Bearer YOUR_XQUIK_API_KEY",
+        "https://xquik.com/mcp"
+      ]
+    }
+  }
+}
+```
 
-This allows remote connections to the local stdio server. The `mcp-proxy` opens a port to listen for SSE requests,
-spawns a local stdio server that handles MCP requests.
+See the [Xquik MCP guide](https://docs.xquik.com/mcp/overview) for available
+tools and authentication options.
+
+Xquik is an independent third-party service. Not affiliated with X Corp.
+"Twitter" and "X" are trademarks of X Corp.
+
+## 2. SSE/StreamableHTTP to stdio
+
+Run a proxy server exposing SSE and Streamable HTTP endpoints that connect to a
+local stdio server.
+
+This allows remote connections to the local stdio server. The `mcp-proxy` opens
+a port for SSE and Streamable HTTP requests, then spawns a local stdio server
+that handles MCP requests.
 
 ```mermaid
 graph LR
-    A["LLM Client"] <-->|SSE| B["mcp-proxy"]
+    A["LLM Client"] <-->|SSE / Streamable HTTP| B["mcp-proxy"]
     B <-->|stdio| C["Local MCP Server"]
 
     style A fill:#ffe6f9,stroke:#333,color:black,stroke-width:2px
@@ -111,10 +140,11 @@ graph LR
 
 ### 2.1 Configuration
 
-This mode requires the `--sse-port` argument to be set. The `--sse-host` argument can be set to specify the host IP
-address that the SSE server will listen on. Additional environment variables can be passed to the local stdio server
-using the `--env` argument. The command line arguments for the local stdio server must be passed after the `--`
-separator.
+Use `--port` to set a fixed port and `--host` to set the listening address.
+Each configured server exposes both an SSE endpoint and a Streamable HTTP
+endpoint. Additional environment variables can be passed to the local stdio
+server using the `--env` argument. The command line arguments for the local
+stdio server must be passed after the `--` separator.
 
 Arguments
 
@@ -173,9 +203,13 @@ mcp-proxy --port=8080 --allow-origin='*' --expose-header Custom-Header uvx mcp-s
   - This argument is ignored if `--named-server-config` is used.
 - `FILE_PATH` - If provided, this is the exclusive source for named servers, and `--named-server` CLI arguments are ignored.
 
-If a default server is specified (the `command_or_url` argument without `--named-server` or `--named-server-config`), it will be accessible at the root paths (e.g., `http://127.0.0.1:8080/sse`).
+If a default server is specified (the `command_or_url` argument without
+`--named-server` or `--named-server-config`), it will be accessible at
+`/sse` and `/mcp` (for example, `http://127.0.0.1:8080/mcp`).
 
-Named servers (whether defined by `--named-server` or `--named-server-config`) will be accessible under `/servers/<server-name>/` (e.g., `http://127.0.0.1:8080/servers/fetch1/sse`).
+Named servers (whether defined by `--named-server` or `--named-server-config`)
+will expose `/servers/<server-name>/sse` and `/servers/<server-name>/mcp`
+(for example, `http://127.0.0.1:8080/servers/fetch1/mcp`).
 The `/status` endpoint provides global status.
 
 **JSON Configuration File Format for `--named-server-config`:**
