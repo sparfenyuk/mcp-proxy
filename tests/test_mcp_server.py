@@ -4,7 +4,7 @@
 import asyncio
 import contextlib
 import typing as t
-from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
+from unittest.mock import AsyncMock, MagicMock, call, create_autospec, patch
 
 import pytest
 import uvicorn
@@ -624,11 +624,11 @@ async def test_run_mcp_server_global_status_updates(
         assert _global_status["server_instances"]["test_server"] == "configured"
 
 
-async def test_run_mcp_server_sse_url_logging(
+async def test_run_mcp_server_transport_url_logging(
     mock_settings: MCPServerSettings,
     mock_stdio_params: StdioServerParameters,
 ) -> None:
-    """Test run_mcp_server logs correct SSE URLs."""
+    """Test run_mcp_server logs both transport URLs."""
     named_servers = {"test_server": mock_stdio_params}
 
     with (
@@ -656,15 +656,20 @@ async def test_run_mcp_server_sse_url_logging(
         # Run the function
         await run_mcp_server(mock_settings, mock_stdio_params, named_servers)
 
-        # Verify SSE URLs were logged
-        expected_default_url = f"http://{mock_settings.bind_host}:{mock_settings.port}/sse"
-        expected_named_url = (
-            f"http://{mock_settings.bind_host}:{mock_settings.port}/servers/test_server/sse"
+        base_url = f"http://{mock_settings.bind_host}:{mock_settings.port}"
+        mock_logger.info.assert_has_calls(
+            [
+                call("Serving MCP Servers:"),
+                call("  - %s: %s", "SSE", f"{base_url}/sse"),
+                call("  - %s: %s", "Streamable HTTP", f"{base_url}/mcp"),
+                call("  - %s: %s", "SSE", f"{base_url}/servers/test_server/sse"),
+                call(
+                    "  - %s: %s",
+                    "Streamable HTTP",
+                    f"{base_url}/servers/test_server/mcp",
+                ),
+            ],
         )
-
-        mock_logger.info.assert_any_call("Serving MCP Servers via SSE:")
-        mock_logger.info.assert_any_call("  - %s", expected_default_url)
-        mock_logger.info.assert_any_call("  - %s", expected_named_url)
 
 
 async def test_run_mcp_server_exception_handling(
