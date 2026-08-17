@@ -25,6 +25,7 @@ from pydantic import AnyUrl
 from mcp_proxy.proxy_server import create_proxy_server
 
 TOOL_INPUT_SCHEMA = {"type": "object", "properties": {"input1": {"type": "string"}}}
+PAGINATION_CURSOR = "page-2"
 
 SessionContextManager = Callable[[Server[object]], AbstractAsyncContextManager[ClientSession]]
 
@@ -382,6 +383,175 @@ async def test_list_resource_templates(
 
         list_resources_result = await session.list_resource_templates()
         assert list_resources_result.resourceTemplates == [resource_template]
+
+
+async def test_list_prompts_pagination(
+    session_generator: SessionContextManager,
+    server: Server[object],
+) -> None:
+    """Test that prompts/list pagination is preserved through the proxy."""
+    first_prompt = types.Prompt(name="prompt-page-1")
+    second_prompt = types.Prompt(name="prompt-page-2")
+    observed_cursors: list[str | None] = []
+
+    @server.list_prompts()  # type: ignore[no-untyped-call,misc]
+    async def _list_prompts(req: types.ListPromptsRequest) -> types.ListPromptsResult:
+        cursor = req.params.cursor if req.params is not None else None
+        observed_cursors.append(cursor)
+        if cursor == PAGINATION_CURSOR:
+            return types.ListPromptsResult(prompts=[second_prompt])
+        return types.ListPromptsResult(
+            prompts=[first_prompt],
+            nextCursor=PAGINATION_CURSOR,
+        )
+
+    async with session_generator(server) as session:
+        await session.initialize()
+
+        first_result = await session.list_prompts()
+        second_result = await session.list_prompts(
+            params=types.PaginatedRequestParams(cursor=PAGINATION_CURSOR),
+        )
+
+        assert first_result.prompts == [first_prompt]
+        assert first_result.nextCursor == PAGINATION_CURSOR
+        assert observed_cursors == [None, PAGINATION_CURSOR]
+        assert second_result.prompts == [second_prompt]
+        assert second_result.nextCursor is None
+
+
+async def test_list_resources_pagination(
+    session_generator: SessionContextManager,
+    server: Server[object],
+) -> None:
+    """Test that resources/list pagination is preserved through the proxy."""
+    first_resource = types.Resource(
+        uri=AnyUrl("scheme://resource-page-1"),
+        name="resource-page-1",
+    )
+    second_resource = types.Resource(
+        uri=AnyUrl("scheme://resource-page-2"),
+        name="resource-page-2",
+    )
+    observed_cursors: list[str | None] = []
+
+    @server.list_resources()  # type: ignore[no-untyped-call,misc]
+    async def _list_resources(req: types.ListResourcesRequest) -> types.ListResourcesResult:
+        cursor = req.params.cursor if req.params is not None else None
+        observed_cursors.append(cursor)
+        if cursor == PAGINATION_CURSOR:
+            return types.ListResourcesResult(resources=[second_resource])
+        return types.ListResourcesResult(
+            resources=[first_resource],
+            nextCursor=PAGINATION_CURSOR,
+        )
+
+    async with session_generator(server) as session:
+        await session.initialize()
+
+        first_result = await session.list_resources()
+        second_result = await session.list_resources(
+            params=types.PaginatedRequestParams(cursor=PAGINATION_CURSOR),
+        )
+
+        assert first_result.resources == [first_resource]
+        assert first_result.nextCursor == PAGINATION_CURSOR
+        assert observed_cursors == [None, PAGINATION_CURSOR]
+        assert second_result.resources == [second_resource]
+        assert second_result.nextCursor is None
+
+
+async def test_list_resource_templates_pagination(
+    session_generator: SessionContextManager,
+    server: Server[object],
+) -> None:
+    """Test that resources/templates/list pagination is preserved through the proxy."""
+    first_template = types.ResourceTemplate(
+        uriTemplate="scheme://resource/{page_1}",
+        name="resource-template-page-1",
+    )
+    second_template = types.ResourceTemplate(
+        uriTemplate="scheme://resource/{page_2}",
+        name="resource-template-page-2",
+    )
+    observed_cursors: list[str | None] = []
+
+    @server.list_resources()  # type: ignore[no-untyped-call,misc]
+    async def _list_resources() -> list[types.Resource]:
+        return []
+
+    async def _list_resource_templates(
+        req: types.ListResourceTemplatesRequest,
+    ) -> types.ServerResult:
+        cursor = req.params.cursor if req.params is not None else None
+        observed_cursors.append(cursor)
+        if cursor == PAGINATION_CURSOR:
+            result = types.ListResourceTemplatesResult(
+                resourceTemplates=[second_template],
+            )
+        else:
+            result = types.ListResourceTemplatesResult(
+                resourceTemplates=[first_template],
+                nextCursor=PAGINATION_CURSOR,
+            )
+        return types.ServerResult(result)
+
+    server.request_handlers[types.ListResourceTemplatesRequest] = _list_resource_templates
+
+    async with session_generator(server) as session:
+        await session.initialize()
+
+        first_result = await session.list_resource_templates()
+        second_result = await session.list_resource_templates(
+            params=types.PaginatedRequestParams(cursor=PAGINATION_CURSOR),
+        )
+
+        assert first_result.resourceTemplates == [first_template]
+        assert first_result.nextCursor == PAGINATION_CURSOR
+        assert observed_cursors == [None, PAGINATION_CURSOR]
+        assert second_result.resourceTemplates == [second_template]
+        assert second_result.nextCursor is None
+
+
+async def test_list_tools_pagination(
+    session_generator: SessionContextManager,
+    server: Server[object],
+) -> None:
+    """Test that tools/list pagination is preserved through the proxy."""
+    first_tool = types.Tool(
+        name="tool-page-1",
+        inputSchema=TOOL_INPUT_SCHEMA,
+    )
+    second_tool = types.Tool(
+        name="tool-page-2",
+        inputSchema=TOOL_INPUT_SCHEMA,
+    )
+    observed_cursors: list[str | None] = []
+
+    @server.list_tools()  # type: ignore[no-untyped-call,misc]
+    async def _list_tools(req: types.ListToolsRequest) -> types.ListToolsResult:
+        cursor = req.params.cursor if req.params is not None else None
+        observed_cursors.append(cursor)
+        if cursor == PAGINATION_CURSOR:
+            return types.ListToolsResult(tools=[second_tool])
+        return types.ListToolsResult(
+            tools=[first_tool],
+            nextCursor=PAGINATION_CURSOR,
+        )
+
+    async with session_generator(server) as session:
+        await session.initialize()
+
+        first_result = await session.list_tools()
+        second_result = await session.list_tools(
+            params=types.PaginatedRequestParams(cursor=PAGINATION_CURSOR),
+        )
+
+        assert first_result.tools == [first_tool]
+        assert first_result.nextCursor == PAGINATION_CURSOR
+        assert observed_cursors == [None, PAGINATION_CURSOR]
+        assert second_result.tools == [second_tool]
+        assert second_result.nextCursor is None
 
 
 @pytest.mark.parametrize("prompt_callback", [AsyncMock()])
