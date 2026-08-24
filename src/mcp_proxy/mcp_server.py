@@ -47,6 +47,7 @@ class MCPServerSettings:
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
 _global_status: dict[str, Any] = {
     "api_last_activity": datetime.now(timezone.utc).isoformat(),
+    "active_sse_connections": 0,
     "server_instances": {},  # Could be used to store per-instance status later
 }
 
@@ -99,12 +100,16 @@ def create_single_instance_routes(
             request._send,  # noqa: SLF001
         ) as (read_stream, write_stream):
             _update_global_activity()
-            await mcp_server_instance.run(
-                read_stream,
-                write_stream,
-                mcp_server_instance.create_initialization_options(),
-                stateless=stateless_instance,
-            )
+            _global_status["active_sse_connections"] += 1
+            try:
+                await mcp_server_instance.run(
+                    read_stream,
+                    write_stream,
+                    mcp_server_instance.create_initialization_options(),
+                    stateless=stateless_instance,
+                )
+            finally:
+                _global_status["active_sse_connections"] -= 1
         return Response()
 
     async def handle_streamable_http_instance(scope: Scope, receive: Receive, send: Send) -> None:
