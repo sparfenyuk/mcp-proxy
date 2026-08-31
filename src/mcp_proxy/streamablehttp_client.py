@@ -1,7 +1,9 @@
 """Create a local server that proxies requests to a remote server over SSE."""
 
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from mcp.client.session import ClientSession
@@ -10,6 +12,7 @@ from mcp.server.stdio import stdio_server
 
 from .httpx_client import custom_httpx_client
 from .proxy_server import create_proxy_server
+from .reconnecting_session import ReconnectingClientSession
 
 
 async def run_streamablehttp_client(
@@ -27,16 +30,23 @@ async def run_streamablehttp_client(
         verify_ssl: Control SSL verification. Use False to disable
             or a path to a certificate bundle.
     """
-    async with (
-        streamablehttp_client(
-            url=url,
-            headers=headers,
-            auth=auth,
-            httpx_client_factory=partial(custom_httpx_client, verify_ssl=verify_ssl),
-        ) as (read, write, _),
-        ClientSession(read, write) as session,
-    ):
-        app = await create_proxy_server(session)
+
+    @asynccontextmanager
+    async def connect() -> AsyncIterator[ClientSession]:
+        async with (
+            streamablehttp_client(
+                url=url,
+                headers=headers,
+                auth=auth,
+                httpx_client_factory=partial(custom_httpx_client, verify_ssl=verify_ssl),
+            ) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
+            yield session
+
+    async with ReconnectingClientSession(connect) as session:
+        # The wrapper forwards every ClientSession method it is given via __getattr__.
+        app = await create_proxy_server(cast("ClientSession", session))
         async with stdio_server() as (read_stream, write_stream):
             await app.run(
                 read_stream,
