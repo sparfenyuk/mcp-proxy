@@ -153,6 +153,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         result = await remote_app.complete(
             req.params.ref,
             req.params.argument.model_dump(),
+            context_arguments=req.params.context.arguments if req.params.context else None,
         )
         return types.ServerResult(result)
 

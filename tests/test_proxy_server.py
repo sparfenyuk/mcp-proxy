@@ -197,7 +197,11 @@ def server_can_send_progress_notification(
 def server_can_complete(
     server: Server[object],
     complete_callback: Callable[
-        [types.PromptReference | types.ResourceReference, types.CompletionArgument],
+        [
+            types.PromptReference | types.ResourceTemplateReference,
+            types.CompletionArgument,
+            types.CompletionContext | None,
+        ],
         Awaitable[types.Completion | None],
     ],
 ) -> Server[object]:
@@ -205,11 +209,11 @@ def server_can_complete(
 
     @server.completion()  # type: ignore[no-untyped-call,misc]
     async def _completion(
-        reference: types.PromptReference | types.ResourceReference,
+        reference: types.PromptReference | types.ResourceTemplateReference,
         argument: types.CompletionArgument,
-        _context: object | None = None,
+        context: types.CompletionContext | None = None,
     ) -> types.Completion | None:
-        return await complete_callback(reference, argument)
+        return await complete_callback(reference, argument, context)
 
     return server
 
@@ -499,10 +503,20 @@ async def test_send_progress_notification(
 
 
 @pytest.mark.parametrize("complete_callback", [AsyncMock()])
+@pytest.mark.parametrize("context_arguments", [None, {}, {"owner": "example"}])
+@pytest.mark.parametrize(
+    "reference",
+    [
+        types.PromptReference(type="ref/prompt", name="name"),
+        types.ResourceTemplateReference(type="ref/resource", uri="repo://{owner}/{name}"),
+    ],
+)
 async def test_complete(
     session_generator: SessionContextManager,
     server_can_complete: Server[object],
     complete_callback: AsyncMock,
+    context_arguments: dict[str, str] | None,
+    reference: types.PromptReference | types.ResourceTemplateReference,
 ) -> None:
     """Test complete."""
     async with session_generator(server_can_complete) as session:
@@ -510,15 +524,19 @@ async def test_complete(
 
         complete_callback.return_value = None
         result = await session.complete(
-            types.PromptReference(type="ref/prompt", name="name"),
+            reference,
             argument={"name": "name", "value": "value"},
+            context_arguments=context_arguments,
         )
 
         assert result.completion.values == []
 
         complete_callback.assert_called_with(
-            types.PromptReference(type="ref/prompt", name="name"),
+            reference,
             types.CompletionArgument(name="name", value="value"),
+            types.CompletionContext(arguments=context_arguments)
+            if context_arguments is not None
+            else None,
         )
         complete_callback.reset_mock()
 
