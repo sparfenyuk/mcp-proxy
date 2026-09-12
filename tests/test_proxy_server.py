@@ -267,6 +267,35 @@ async def test_list_tools(
             await session.list_prompts()
 
 
+async def test_list_tools_forwards_pagination_cursor(tool: types.Tool) -> None:
+    """Test that tool pagination survives the proxy."""
+    server: Server[object] = Server("paginated-tools-server")
+    second_tool = types.Tool(
+        name="second-tool",
+        description="second-tool-description",
+        inputSchema=TOOL_INPUT_SCHEMA,
+    )
+
+    @server.list_tools()  # type: ignore[no-untyped-call,misc]
+    async def _list_tools(req: types.ListToolsRequest) -> types.ListToolsResult:
+        cursor = req.params.cursor if req.params else None
+        if cursor is None:
+            return types.ListToolsResult(tools=[tool], nextCursor="page-2")
+        assert cursor == "page-2"
+        return types.ListToolsResult(tools=[second_tool])
+
+    async with proxy(server) as session:
+        await session.initialize()
+
+        first_page = await session.list_tools()
+        assert first_page.tools == [tool]
+        assert first_page.nextCursor == "page-2"
+
+        second_page = await session.list_tools(first_page.nextCursor)
+        assert second_page.tools == [second_tool]
+        assert second_page.nextCursor is None
+
+
 @pytest.mark.parametrize("logging_level_callback", [AsyncMock()])
 @pytest.mark.parametrize(
     "log_level",

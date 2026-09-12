@@ -85,8 +85,8 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
     if capabilities.tools:
         logger.debug("Capabilities: adding Tools...")
 
-        async def _list_tools(_: t.Any) -> types.ServerResult:  # noqa: ANN401
-            tools = await remote_app.list_tools()
+        async def _list_tools(req: types.ListToolsRequest) -> types.ServerResult:
+            tools = await remote_app.list_tools(params=req.params)
             return types.ServerResult(tools)
 
         app.request_handlers[types.ListToolsRequest] = _list_tools
