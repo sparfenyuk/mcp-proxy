@@ -65,6 +65,17 @@ def server() -> Server[object]:
     return Server("test-server")
 
 
+async def test_proxy_preserves_server_version() -> None:
+    """Test that initialization reports the upstream server version."""
+    server: Server[object] = Server("versioned-server", version="2.4.1")
+
+    async with proxy(server) as session:
+        result = await session.initialize()
+
+    assert result.serverInfo.name == "versioned-server"
+    assert result.serverInfo.version == "2.4.1"
+
+
 @pytest.fixture
 def server_can_list_prompts(server: Server[object], prompt: types.Prompt) -> Server[object]:
     """Return a server instance with prompts."""
