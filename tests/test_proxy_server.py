@@ -25,6 +25,7 @@ from pydantic import AnyUrl
 from mcp_proxy.proxy_server import create_proxy_server
 
 TOOL_INPUT_SCHEMA = {"type": "object", "properties": {"input1": {"type": "string"}}}
+SERVER_INSTRUCTIONS = "Use this server when you need the proxied tools."
 
 SessionContextManager = Callable[[Server[object]], AbstractAsyncContextManager[ClientSession]]
 
@@ -62,7 +63,18 @@ def session_generator(request: pytest.FixtureRequest) -> SessionContextManager:
 @pytest.fixture
 def server() -> Server[object]:
     """Return a server instance."""
-    return Server("test-server")
+    return Server("test-server", instructions=SERVER_INSTRUCTIONS)
+
+
+async def test_server_instructions_are_preserved(
+    session_generator: SessionContextManager,
+    server: Server[object],
+) -> None:
+    """Return the wrapped server's instructions during initialization."""
+    async with session_generator(server) as session:
+        result = await session.initialize()
+
+    assert result.instructions == SERVER_INSTRUCTIONS
 
 
 @pytest.fixture
