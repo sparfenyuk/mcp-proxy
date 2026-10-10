@@ -16,6 +16,7 @@ import sys
 import typing as t
 from importlib.metadata import version
 
+from httpx import Auth, BasicAuth, DigestAuth
 from httpx_auth import OAuth2ClientCredentials
 from mcp.client.stdio import StdioServerParameters
 
@@ -54,6 +55,8 @@ def _setup_argument_parser() -> argparse.ArgumentParser:
             "  mcp-proxy http://localhost:8080/sse\n"
             "  mcp-proxy --no-verify-ssl https://server.local/sse\n"
             "  mcp-proxy --transport streamablehttp http://localhost:8080/mcp\n"
+            "  mcp-proxy --transport streamablehttp --username user --password pass "
+            "https://server.local/mcp\n"
             "  mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse\n"
             "  mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2\n"
             "  mcp-proxy --named-server fetch 'uvx mcp-server-fetch' --port 8080\n"
@@ -124,6 +127,21 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         "--token-url",
         type=str,
         help="OAuth2 token URL for authentication",
+    )
+    client_group.add_argument(
+        "--username",
+        type=str,
+        help="Username for authentication",
+    )
+    client_group.add_argument(
+        "--password",
+        type=str,
+        help="Password for authentication",
+    )
+    client_group.add_argument(
+        "--digest",
+        action="store_true",
+        help="Use digest authentication",
     )
     client_group.add_argument(
         "--verify-ssl",
@@ -301,20 +319,28 @@ def _handle_sse_client_mode(
     if api_access_token := os.getenv("API_ACCESS_TOKEN", None):
         headers["Authorization"] = f"Bearer {api_access_token}"
 
-    # Collect client credentials and token url if provided
+    # Collect client credentials if provided
     client_id = args_parsed.client_id
     client_secret = args_parsed.client_secret
     token_url = args_parsed.token_url
+    username = args_parsed.username
+    password = args_parsed.password
+    digest = args_parsed.digest
 
-    auth = (
-        OAuth2ClientCredentials(
+    auth: Auth | None = None
+    if client_id and client_secret and token_url:
+        auth = OAuth2ClientCredentials(
             client_id=client_id,
             client_secret=client_secret,
             token_url=token_url,
         )
-        if client_id and client_secret and token_url
-        else None
-    )
+    elif username and password:
+        auth = DigestAuth(username, password) if digest else BasicAuth(username, password)
+    elif username or password or digest:
+        logger.error("Both --username and --password are required")
+        sys.exit(1)
+    else:
+        auth = None
 
     if args_parsed.transport == "streamablehttp":
         asyncio.run(
