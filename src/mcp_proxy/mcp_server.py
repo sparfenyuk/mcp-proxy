@@ -94,22 +94,31 @@ def create_single_instance_routes(
     )
 
     async def handle_sse_instance(request: Request) -> Response:
-        async with sse_transport.connect_sse(
-            request.scope,
-            request.receive,
-            request._send,  # noqa: SLF001
-        ) as (read_stream, write_stream):
-            _update_global_activity()
-            _global_status["active_sse_connections"] += 1
-            try:
-                await mcp_server_instance.run(
-                    read_stream,
-                    write_stream,
-                    mcp_server_instance.create_initialization_options(),
-                    stateless=stateless_instance,
-                )
-            finally:
-                _global_status["active_sse_connections"] -= 1
+        try:
+            async with sse_transport.connect_sse(
+                request.scope,
+                request.receive,
+                request._send,  # noqa: SLF001
+            ) as (read_stream, write_stream):
+                _update_global_activity()
+                _global_status["active_sse_connections"] += 1
+                try:
+                    await mcp_server_instance.run(
+                        read_stream,
+                        write_stream,
+                        mcp_server_instance.create_initialization_options(),
+                        stateless=stateless_instance,
+                    )
+                finally:
+                    _global_status["active_sse_connections"] -= 1
+        except Exception:  # noqa: BLE001
+            # SSE response already started — cannot send HTTP error response.
+            # Log and let the connection close gracefully.
+            logger.warning(
+                "SSE connection for '%s' terminated with error (upstream disconnect?)",
+                mcp_server_instance.name,
+                exc_info=True,
+            )
         return Response()
 
     async def handle_streamable_http_instance(scope: Scope, receive: Receive, send: Send) -> None:
