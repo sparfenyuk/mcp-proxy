@@ -63,6 +63,9 @@ Arguments
 | `--client-id`    | No       | OAuth2 client ID for authentication                                                                               | your_client_id                                |
 | `--client-secret`| No       | OAuth2 client secret for authentication                                                                           | your_client_secret                            |
 | `--token-url`    | No       | OAuth2 token endpoint URL for authentication                                                                      | https://auth.example.com/oauth/token          |
+| `--username`     | No       | Username for authentication                                                                                       | user                                          |
+| `--password`     | No       | Password for authentication                                                                                       | password                                      |
+| `--digest`       | No       | Use digest authentication                                                                                         |                                               |
 
 Environment Variables
 
@@ -351,6 +354,9 @@ SSE/StreamableHTTP client options:
                         OAuth2 client secret for authentication
   --token-url TOKEN_URL
                         OAuth2 token URL for authentication
+  --username USERNAME   Username for authentication
+  --password PASSWORD   Password for authentication
+  --digest              Use digest authentication
 
 stdio client options:
   args                  Any extra arguments to the command to spawn the default server. Ignored if only named servers are defined.
@@ -381,6 +387,7 @@ Examples:
   mcp-proxy http://localhost:8080/sse
   mcp-proxy --no-verify-ssl https://server.local/sse
   mcp-proxy --transport streamablehttp http://localhost:8080/mcp
+  mcp-proxy --transport streamablehttp --username user --password pass https://server.local/mcp
   mcp-proxy --headers Authorization 'Bearer YOUR_TOKEN' http://localhost:8080/sse
   mcp-proxy --client-id CLIENT_ID --client-secret CLIENT_SECRET --token-url https://auth.example.com/token http://localhost:8080/sse
   mcp-proxy --port 8080 -- your-command --arg1 value1 --arg2 value2
