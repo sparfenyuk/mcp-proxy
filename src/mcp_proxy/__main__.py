@@ -16,8 +16,8 @@ import sys
 import typing as t
 from importlib.metadata import version
 
+from httpx import Auth, BasicAuth, DigestAuth
 from httpx_auth import OAuth2ClientCredentials
-from httpx import BasicAuth, DigestAuth
 from mcp.client.stdio import StdioServerParameters
 
 from .config_loader import load_named_server_configs_from_file
@@ -327,6 +327,7 @@ def _handle_sse_client_mode(
     password = args_parsed.password
     digest = args_parsed.digest
 
+    auth: Auth | None = None
     if client_id and client_secret and token_url:
         auth = OAuth2ClientCredentials(
             client_id=client_id,
@@ -334,11 +335,7 @@ def _handle_sse_client_mode(
             token_url=token_url,
         )
     elif username and password:
-        auth = (
-            DigestAuth(username, password)
-            if digest
-            else BasicAuth(username, password)
-        )
+        auth = DigestAuth(username, password) if digest else BasicAuth(username, password)
     elif username or password or digest:
         logger.error("Both --username and --password are required")
         sys.exit(1)
