@@ -111,7 +111,7 @@ def create_single_instance_routes(
                     )
                 finally:
                     _global_status["active_sse_connections"] -= 1
-        except Exception:
+        except Exception:  # noqa: BLE001
             # SSE response already started — cannot send HTTP error response.
             # Log and let the connection close gracefully.
             logger.warning(
