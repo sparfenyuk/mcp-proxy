@@ -10,6 +10,7 @@
   - [1. stdio to SSE/StreamableHTTP](#1-stdio-to-ssestreamablehttp)
     - [1.1 Configuration](#11-configuration)
     - [1.2 Example usage](#12-example-usage)
+    - [1.3 Parallel Search MCP](#13-parallel-search-mcp)
   - [2. SSE to stdio](#2-sse-to-stdio)
     - [2.1 Configuration](#21-configuration)
     - [2.2 Example usage](#22-example-usage)
@@ -94,6 +95,45 @@ For Claude Desktop, the configuration entry can look like this:
   }
 }
 ```
+
+### 1.3 Parallel Search MCP
+
+[Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) provides free web
+search and page fetching without an account or API key. Anonymous search uses Fast mode and
+has lower rate limits than authenticated access.
+
+After [installing mcp-proxy](#installation), merge the `parallel-search` entry from
+[examples/parallel-search.json](examples/parallel-search.json) into your stdio MCP client's
+`mcpServers` configuration (for example, Claude Desktop):
+
+```json
+{
+  "mcpServers": {
+    "parallel-search": {
+      "command": "mcp-proxy",
+      "args": [
+        "--transport=streamablehttp",
+        "--headers",
+        "User-Agent",
+        "mcp-proxy",
+        "https://search.parallel.ai/mcp"
+      ],
+      "env": {
+        "API_ACCESS_TOKEN": ""
+      }
+    }
+  }
+}
+```
+
+The explicit transport selects Streamable HTTP; the default SSE transport does not work with
+this endpoint. The empty `API_ACCESS_TOKEN` prevents an inherited token from being sent, so
+this example connects anonymously. If your client cannot find `mcp-proxy`, use its
+[full executable path](#troubleshooting).
+
+Restart the client and check its tool list for `web_search` and `web_fetch`. To try the tools,
+call `web_search` with an `objective` and a nonempty `search_queries` array, then call
+`web_fetch` with a `urls` array containing a result URL.
 
 ## 2. SSE to stdio
 
