@@ -74,6 +74,11 @@ async def _handle_status(_: Request) -> Response:
     return JSONResponse(_global_status)
 
 
+async def _handle_healthz(_: Request) -> Response:
+    """Respond to a transport liveness probe without allocating an MCP session."""
+    return Response(status_code=204)
+
+
 def create_single_instance_routes(
     mcp_server_instance: MCPServerSDK[object],
     *,
@@ -147,6 +152,7 @@ def create_single_instance_routes(
         await http_session_manager.handle_request(updated_scope, receive, send)
 
     routes = [
+        Route("/healthz", endpoint=_handle_healthz, methods=["GET", "HEAD"]),
         Route(
             "/mcp",
             endpoint=_ASGIEndpointAdapter(handle_streamable_http_instance),
