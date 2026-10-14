@@ -53,6 +53,8 @@ graph LR
 
 This mode requires providing the URL of the MCP Server's SSE endpoint as the program’s first argument. If the server uses Streamable HTTP transport, make sure to enforce it on the `mcp-proxy` side by passing `--transport=streamablehttp`.
 
+When the proxy is a **Streamable HTTP client**, it bounds the final MCP session-termination `DELETE` request to five seconds. This prevents an unresponsive remote termination endpoint from indefinitely blocking shutdown. The shorter termination deadline does **not** apply to normal `GET` streams or `POST` tool calls, whose usual HTTP timeouts remain in effect. This limit is specific to reverse-client mode; it does not change the stateful/stateless behavior of proxied HTTP servers.
+
 Arguments
 
 | Name             | Required | Description                                                                                                       | Example                                       |
