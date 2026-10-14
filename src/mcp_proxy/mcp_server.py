@@ -64,6 +64,10 @@ class MCPServerSettings:
     allowed_hosts: list[str] | None = None
     initialization_timeout: float | None = None
     auth_bearer_token: str | None = None
+    # New fields follow existing fields to preserve positional call compatibility.
+    # "sdk" preserves the SDK's defaults; None explicitly disables a limit.
+    session_idle_timeout: float | None | Literal["sdk"] = "sdk"
+    max_sessions: int | None | Literal["sdk"] = "sdk"
 
 
 def _valid_bearer_token_bytes(token: bytes) -> bool:
@@ -382,10 +386,31 @@ async def _handle_healthz(_: Request) -> Response:
     return Response(status_code=204)
 
 
+def _session_manager_options(
+    *,
+    stateless_instance: bool,
+    session_idle_timeout: float | None | Literal["sdk"],
+    max_sessions: int | None | Literal["sdk"],
+) -> dict[str, Any]:
+    """Forward only explicit stateful session-limit overrides to the SDK."""
+    if stateless_instance:
+        if session_idle_timeout != "sdk" or max_sessions != "sdk":
+            logger.warning("Session limits have no effect in stateless mode")
+        return {}
+    options: dict[str, Any] = {}
+    if session_idle_timeout != "sdk":
+        options["session_idle_timeout"] = session_idle_timeout
+    if max_sessions != "sdk":
+        options["max_sessions"] = max_sessions
+    return options
+
+
 def create_single_instance_routes(
     mcp_server_instance: MCPServerSDK[object],
     *,
     stateless_instance: bool,
+    session_idle_timeout: float | None | Literal["sdk"] = "sdk",
+    max_sessions: int | None | Literal["sdk"] = "sdk",
 ) -> tuple[list[BaseRoute], StreamableHTTPSessionManager]:  # Return the manager itself
     """Create Starlette routes and the HTTP session manager for a single MCP server instance."""
     logger.debug(
@@ -394,11 +419,17 @@ def create_single_instance_routes(
     )
 
     sse_transport = SseServerTransport("/messages/")
+    manager_options = _session_manager_options(
+        stateless_instance=stateless_instance,
+        session_idle_timeout=session_idle_timeout,
+        max_sessions=max_sessions,
+    )
     http_session_manager = StreamableHTTPSessionManager(
         app=mcp_server_instance,
         event_store=None,
         json_response=True,
         stateless=stateless_instance,
+        **manager_options,
     )
 
     async def handle_sse_instance(request: Request) -> Response:
@@ -553,12 +584,14 @@ class _StdioExitWatch:
             sys.exit(1)
 
 
-async def _prepare_stdio_server_routes(
+async def _prepare_stdio_server_routes(  # noqa: PLR0913
     stack: contextlib.AsyncExitStack,
     stdio_exit: _StdioExitWatch,
     params: StdioServerParameters,
     settings: MCPServerSettings,
     identity: str | None,
+    *,
+    route_options: dict[str, Any] | None = None,
 ) -> list[BaseRoute]:
     """Prepare one stdio backend and register its lifetimes on the supplied stack."""
     stdio_exit.begin(identity)
@@ -573,6 +606,7 @@ async def _prepare_stdio_server_routes(
     instance_routes, http_manager = create_single_instance_routes(
         proxy,
         stateless_instance=settings.stateless,
+        **(route_options or {}),
     )
     stdio_exit.startup_stage = "manager"
     await stack.enter_async_context(http_manager.run())
@@ -605,12 +639,14 @@ def _named_startup_failure_category(error: BaseException, stage: str) -> str | N
     return None
 
 
-async def _prepare_named_stdio_server_routes(
+async def _prepare_named_stdio_server_routes(  # noqa: PLR0913
     stack: contextlib.AsyncExitStack,
     stdio_exit: _StdioExitWatch,
     params: StdioServerParameters,
     settings: MCPServerSettings,
     name: str,
+    *,
+    route_options: dict[str, Any] | None = None,
 ) -> list[BaseRoute]:
     """Prepare a named backend privately and transfer its exits only on success."""
     attempt_stack = contextlib.AsyncExitStack()
@@ -621,6 +657,7 @@ async def _prepare_named_stdio_server_routes(
             params,
             settings,
             name,
+            route_options=route_options,
         )
     except BaseException as error:
         try:
@@ -688,6 +725,11 @@ async def _serve_mcp_server(
     has_default_name_collision = (
         default_server_params is not None and "default" in named_server_params
     )
+    route_options = _session_manager_options(
+        stateless_instance=mcp_settings.stateless,
+        session_idle_timeout=mcp_settings.session_idle_timeout,
+        max_sessions=mcp_settings.max_sessions,
+    )
     # Use AsyncExitStack to manage lifecycles of multiple components
     async with contextlib.AsyncExitStack() as stack:
         # Manage lifespans of all StreamableHTTPSessionManagers
@@ -711,6 +753,7 @@ async def _serve_mcp_server(
                 default_server_params,
                 mcp_settings,
                 None,
+                route_options=route_options,
             )
             all_routes.extend(instance_routes)
             default_status_key = _server_status_key(None, has_default_name_collision)
@@ -732,6 +775,7 @@ async def _serve_mcp_server(
                     params,
                     mcp_settings,
                     name,
+                    route_options=route_options,
                 )
             except _StdioStartupFailureError as error:
                 _global_status["server_instances"][status_key] = "failed"

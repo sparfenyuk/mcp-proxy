@@ -15,13 +15,14 @@ import os
 import shlex
 import sys
 import typing as t
+from decimal import Decimal, InvalidOperation
 from importlib.metadata import version
 
 from httpx import Auth, BasicAuth, DigestAuth
 from httpx_auth import OAuth2ClientCredentials
 from mcp.client.stdio import StdioServerParameters
 
-from .config_loader import load_named_server_configs_from_file
+from .config_loader import load_named_server_configs_from_file, load_proxy_options_from_file
 from .mcp_server import DEFAULT_EXPOSE_HEADERS, MCPServerSettings, run_mcp_server
 from .sse_client import run_sse_client
 from .streamablehttp_client import run_streamablehttp_client
@@ -53,6 +54,43 @@ def _positive_timeout(value: str) -> float:
     if not math.isfinite(timeout) or timeout <= 0:
         raise argparse.ArgumentTypeError("timeout must be a finite number greater than zero")
     return timeout
+
+
+def _parse_idle_timeout(value: str) -> float | None:
+    """Parse finite positive seconds; accept only genuine numeric zero or none to disable."""
+    normalized = value.strip().lower()
+    if normalized == "none":
+        return None
+    try:
+        timeout = float(normalized)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Expected positive seconds or 'none'") from exc
+    if not math.isfinite(timeout):
+        raise argparse.ArgumentTypeError("Idle timeout must be finite and positive, or 'none'")
+    if timeout == 0:
+        # float('1e-10000') underflows to zero, but must not disable cleanup.
+        try:
+            if Decimal(normalized) == 0:
+                return None
+        except InvalidOperation as exc:
+            raise argparse.ArgumentTypeError("Invalid idle timeout") from exc
+        raise argparse.ArgumentTypeError("Idle timeout underflows floating-point precision")
+    if timeout < 0:
+        raise argparse.ArgumentTypeError("Idle timeout must be finite and positive, or 'none'")
+    return timeout
+
+
+def _parse_max_sessions(value: str) -> int | None:
+    """Parse a positive maximum or 'none' for no cap."""
+    if value.strip().lower() == "none":
+        return None
+    try:
+        maximum = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("Expected a positive integer or 'none'") from exc
+    if maximum <= 0:
+        raise argparse.ArgumentTypeError("Maximum sessions must be positive or 'none'")
+    return maximum
 
 
 def _setup_argument_parser() -> argparse.ArgumentParser:
@@ -288,6 +326,20 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         default=False,
     )
     mcp_server_group.add_argument(
+        "--session-idle-timeout",
+        type=_parse_idle_timeout,
+        default=argparse.SUPPRESS,
+        metavar="SECONDS|none",
+        help="Stateful HTTP session idle timeout; 0/none disables reaping (default: SDK default).",
+    )
+    mcp_server_group.add_argument(
+        "--max-sessions",
+        type=_parse_max_sessions,
+        default=argparse.SUPPRESS,
+        metavar="COUNT|none",
+        help="Maximum stateful HTTP sessions; none disables the cap (default: SDK default).",
+    )
+    mcp_server_group.add_argument(
         "--sse-port",
         type=int,
         default=0,
@@ -513,7 +565,31 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
     auth_bearer_token = args_parsed.auth_bearer_token
     if auth_bearer_token is None:
         auth_bearer_token = os.getenv("MCP_PROXY_AUTH_TOKEN")
+    idle_timeout: float | None | t.Literal["sdk"] = getattr(
+        args_parsed, "session_idle_timeout", "sdk"
+    )
+    max_sessions: int | None | t.Literal["sdk"] = getattr(args_parsed, "max_sessions", "sdk")
+    if args_parsed.named_server_config:
+        options = load_proxy_options_from_file(args_parsed.named_server_config)
+        for key, raw in options.items():
+            if isinstance(raw, bool):
+                message = f"Invalid mcpProxy.{key}: boolean values are not limits"
+                raise TypeError(message)
+            try:
+                if key == "session_idle_timeout":
+                    parsed_timeout = None if raw is None else _parse_idle_timeout(str(raw))
+                    if idle_timeout == "sdk":
+                        idle_timeout = parsed_timeout
+                elif key == "max_sessions":
+                    parsed_count = None if raw is None else _parse_max_sessions(str(raw))
+                    if max_sessions == "sdk":
+                        max_sessions = parsed_count
+            except argparse.ArgumentTypeError as exc:
+                message = f"Invalid mcpProxy.{key}: {exc}"
+                raise ValueError(message) from exc
     return MCPServerSettings(
+        session_idle_timeout=idle_timeout,
+        max_sessions=max_sessions,
         bind_host=args_parsed.host if args_parsed.host is not None else args_parsed.sse_host,
         port=args_parsed.port if args_parsed.port is not None else args_parsed.sse_port,
         stateless=args_parsed.stateless,
@@ -593,7 +669,10 @@ def main() -> None:
         sys.exit(1)
 
     # Create MCP server settings and run the server
-    mcp_settings = _create_mcp_settings(args_parsed)
+    try:
+        mcp_settings = _create_mcp_settings(args_parsed)
+    except (ValueError, TypeError, OSError, json.JSONDecodeError) as exc:
+        parser.error(str(exc))
     asyncio.run(
         run_mcp_server(
             default_server_params=default_stdio_params,
