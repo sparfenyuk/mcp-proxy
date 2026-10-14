@@ -6,11 +6,13 @@ This server is created independent of any transport mechanism.
 import logging
 import typing as t
 
+import anyio
 from mcp import server, types
 from mcp.client.session import ClientSession
 from mcp.server.lowlevel.server import request_ctx
 
 logger = logging.getLogger(__name__)
+CANCELLATION_FORWARD_TIMEOUT_SECONDS = 5.0
 
 
 async def create_proxy_server(remote_app: ClientSession) -> server.Server[object]:  # noqa: C901, PLR0915
@@ -131,12 +133,36 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
                     progress_callback = progress_forwarder
 
-                result = await remote_app.call_tool(
-                    req.params.name,
-                    (req.params.arguments or {}),
-                    meta=meta_dict,
-                    progress_callback=progress_callback,
+                # SDK v1 reserves this ID before its first await but does not forward cancellation.
+                remote_request_id = (
+                    getattr(remote_app, "_request_id", None)
+                    if isinstance(remote_app, ClientSession)
+                    else None
                 )
+                try:
+                    result = await remote_app.call_tool(
+                        req.params.name,
+                        (req.params.arguments or {}),
+                        meta=meta_dict,
+                        progress_callback=progress_callback,
+                    )
+                except anyio.get_cancelled_exc_class():
+                    if remote_request_id is not None:
+                        with anyio.move_on_after(CANCELLATION_FORWARD_TIMEOUT_SECONDS, shield=True):
+                            try:
+                                await remote_app.send_notification(
+                                    types.ClientNotification(
+                                        types.CancelledNotification(
+                                            params=types.CancelledNotificationParams(
+                                                requestId=remote_request_id,
+                                                reason="Downstream request cancelled",
+                                            ),
+                                        ),
+                                    ),
+                                )
+                            except Exception:  # noqa: BLE001
+                                logger.warning("Unable to forward MCP tool cancellation")
+                    raise
                 return types.ServerResult(result)
             except Exception as e:  # noqa: BLE001
                 return types.ServerResult(
