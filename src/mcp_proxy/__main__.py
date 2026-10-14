@@ -297,7 +297,8 @@ def _setup_logging(*, level: str, debug: bool) -> logging.Logger:
     """Set up logging configuration and return the logger."""
     logging.basicConfig(
         level=logging.DEBUG if debug else level,
-        format="[%(levelname)1.1s %(asctime)s.%(msecs).03d %(name)s] %(message)s",
+        format="[%(levelname)1.1s %(asctime)s.%(msecs)03d %(name)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
     )
     return logging.getLogger(__name__)
 
