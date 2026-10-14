@@ -137,6 +137,37 @@ Arguments
 | `--sse-port` (deprecated)            | No, random available       | The SSE server port to listen on                                                              | 8080                                        |
 | `--sse-host` (deprecated)            | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on                                        | 0.0.0.0                                     |
 
+### Stateful StreamableHTTP session limits
+
+By default, `mcp-proxy` uses the installed MCP SDK's session idle timeout and
+maximum session count without overriding them. Operators may configure both
+limits for stateful HTTP sessions:
+
+```bash
+mcp-proxy --port 8080 --session-idle-timeout 600 --max-sessions 100 uvx mcp-server-fetch
+```
+
+`--session-idle-timeout` accepts positive seconds or `0`/`none` to disable
+idle reaping. `--max-sessions` accepts a positive integer or `none` for no
+limit. Disabling limits can allow abandoned sessions to accumulate. Neither
+setting affects stateless HTTP, and an explicit limit there produces a warning.
+These flags require an MCP SDK version supporting the corresponding manager
+arguments (MCP SDK 1.30.0 or newer).
+
+When using `--named-server-config`, optional **global** settings apply to
+all named server HTTP routes. Add an `mcpProxy` section alongside `mcpServers`:
+
+```json
+{
+  "mcpProxy": {"session_idle_timeout": 600, "max_sessions": 100},
+  "mcpServers": {"example": {"command": "uvx", "args": ["mcp-server-fetch"]}}
+}
+```
+
+For these JSON keys, `null` disables a limit; omitting the key preserves the
+SDK default. Explicit CLI flags override the configuration values. These
+settings govern the proxy's HTTP sessions, not the stdio subprocesses.
+
 ### 2.2 Example usage
 
 To start the `mcp-proxy` server that listens on port 8080 and connects to the local MCP server:
