@@ -6,6 +6,7 @@ This module provides functionality to load named server configurations from JSON
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 from mcp.client.stdio import StdioServerParameters
 
@@ -101,3 +102,24 @@ def load_named_server_configs_from_file(
         )
 
     return named_stdio_params
+
+
+def load_proxy_options_from_file(config_file_path: str | Path) -> dict[str, Any]:
+    """Read optional global transport limits from a named-server JSON config.
+
+    The mcpProxy section applies to all HTTP routes; individual mcpServers
+    entries continue to contain only child process launch settings.
+    """
+    with Path(config_file_path).open(encoding="utf-8") as stream:
+        document = json.load(stream)
+    if not isinstance(document, dict):
+        raise TypeError("Named-server configuration must be a JSON object")
+    options = document.get("mcpProxy", {})
+    if not isinstance(options, dict):
+        raise TypeError("'mcpProxy' must be a JSON object")
+    allowed = {"session_idle_timeout", "max_sessions"}
+    unexpected = set(options) - allowed
+    if unexpected:
+        message = f"Unknown mcpProxy setting(s): {', '.join(sorted(unexpected))}"
+        raise ValueError(message)
+    return options
