@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "parallel-search": {
+      "command": "mcp-proxy",
+      "args": [
+        "--transport=streamablehttp",
+        "--headers",
+        "User-Agent",
+        "mcp-proxy",
+        "https://search.parallel.ai/mcp"
+      ],
+      "env": {
+        "API_ACCESS_TOKEN": ""
+      }
+    }
+  }
+}
