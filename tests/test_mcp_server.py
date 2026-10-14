@@ -738,3 +738,73 @@ async def test_run_mcp_server_both_default_and_named_servers(
         )
 
         mock_server_instance.serve.assert_called_once()
+
+
+# --- Bearer auth middleware tests -------------------------------------------
+
+
+from starlette.requests import Request  # noqa: E402
+from starlette.responses import PlainTextResponse  # noqa: E402
+from starlette.routing import Route as _Route  # noqa: E402
+from starlette.testclient import TestClient  # noqa: E402
+
+from mcp_proxy.mcp_server import BearerAuthMiddleware  # noqa: E402
+
+
+def _build_app_with_bearer(token: str) -> Starlette:
+    """Build a minimal Starlette app guarded by ``BearerAuthMiddleware``."""
+
+    async def secret(_: Request) -> PlainTextResponse:
+        return PlainTextResponse("ok")
+
+    async def status(_: Request) -> PlainTextResponse:
+        return PlainTextResponse("status-ok")
+
+    return Starlette(
+        routes=[_Route("/secret", endpoint=secret), _Route("/status", endpoint=status)],
+        middleware=[Middleware(BearerAuthMiddleware, token=token)],
+    )
+
+
+def test_bearer_auth_rejects_missing_header() -> None:
+    """Requests without an Authorization header are rejected with 401."""
+    client = TestClient(_build_app_with_bearer("s3cret"))
+    response = client.get("/secret")
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"].lower().startswith("bearer")
+
+
+def test_bearer_auth_rejects_wrong_scheme() -> None:
+    """A non-Bearer scheme (e.g. Basic) is rejected with 401."""
+    client = TestClient(_build_app_with_bearer("s3cret"))
+    response = client.get("/secret", headers={"Authorization": "Basic s3cret"})
+    assert response.status_code == 401
+
+
+def test_bearer_auth_rejects_wrong_token() -> None:
+    """A Bearer token that does not match the configured value yields 401."""
+    client = TestClient(_build_app_with_bearer("s3cret"))
+    response = client.get("/secret", headers={"Authorization": "Bearer nope"})
+    assert response.status_code == 401
+
+
+def test_bearer_auth_accepts_valid_token() -> None:
+    """A request carrying the correct Bearer token reaches the endpoint."""
+    client = TestClient(_build_app_with_bearer("s3cret"))
+    response = client.get("/secret", headers={"Authorization": "Bearer s3cret"})
+    assert response.status_code == 200
+    assert response.text == "ok"
+
+
+def test_bearer_auth_bypasses_status() -> None:
+    """The /status health endpoint is reachable without authentication."""
+    client = TestClient(_build_app_with_bearer("s3cret"))
+    response = client.get("/status")
+    assert response.status_code == 200
+    assert response.text == "status-ok"
+
+
+def test_bearer_auth_rejects_empty_token_init() -> None:
+    """Constructing ``BearerAuthMiddleware`` with an empty token raises ValueError."""
+    with pytest.raises(ValueError, match="non-empty token"):
+        BearerAuthMiddleware(app=lambda *_: None, token="")
