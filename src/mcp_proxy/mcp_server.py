@@ -2,11 +2,13 @@
 
 import contextlib
 import logging
+import sys
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Final, Literal
 
+import anyio
 import uvicorn
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -160,6 +162,56 @@ def create_single_instance_routes(
     return routes, http_session_manager
 
 
+class _StdioExitWatch:
+    """Stop the proxy when a stdio server exits, so it exits non-zero and can be restarted."""
+
+    def __init__(self) -> None:
+        self.http_server: uvicorn.Server | None = None
+        self.exited: list[str] = []
+
+    @contextlib.asynccontextmanager
+    async def client(
+        self, params: StdioServerParameters, name: str
+    ) -> AsyncIterator[tuple[Any, Any]]:
+        """Like stdio_client, but notice when the server's stdout closes."""
+        async with stdio_client(params) as (read_stream, write_stream):
+            send, receive = anyio.create_memory_object_stream[Any](0)
+
+            async def forward() -> None:
+                async with send:
+                    try:
+                        async for message in read_stream:
+                            await send.send(message)
+                    except anyio.BrokenResourceError:
+                        return  # the session stopped reading: we are shutting down
+                self._on_exit(name)
+
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(forward)
+                yield receive, write_stream
+                tg.cancel_scope.cancel()
+
+    def _on_exit(self, name: str) -> None:
+        if self.http_server is not None and self.http_server.should_exit:
+            return  # already shutting down (e.g. Ctrl+C), which stops the stdio server too
+        logger.error("Stdio server '%s' exited, shutting down", name)
+        self.exited.append(name)
+        if self.http_server is not None:
+            self.http_server.should_exit = True
+            # Don't let a client's open connection keep a proxy with a dead server running.
+            self.http_server.config.timeout_graceful_shutdown = 5
+
+    def attach(self, http_server: uvicorn.Server) -> None:
+        """Stop this server when a stdio server exits, or right away if one already has."""
+        self.http_server = http_server
+        http_server.should_exit = bool(self.exited)
+
+    def exit_if_exited(self) -> None:
+        """Exit non-zero if a stdio server exited, so a supervisor restarts the proxy."""
+        if self.exited:
+            sys.exit(1)
+
+
 async def run_mcp_server(
     mcp_settings: MCPServerSettings,
     default_server_params: StdioServerParameters | None = None,
@@ -169,6 +221,7 @@ async def run_mcp_server(
     if named_server_params is None:
         named_server_params = {}
 
+    stdio_exit = _StdioExitWatch()
     all_routes: list[BaseRoute] = [
         Route("/status", endpoint=_handle_status),  # Global status endpoint
     ]
@@ -189,7 +242,9 @@ async def run_mcp_server(
                 default_server_params.command,
                 " ".join(default_server_params.args),
             )
-            stdio_streams = await stack.enter_async_context(stdio_client(default_server_params))
+            stdio_streams = await stack.enter_async_context(
+                stdio_exit.client(default_server_params, "default"),
+            )
             session = await stack.enter_async_context(ClientSession(*stdio_streams))
             proxy = await create_proxy_server(session)
 
@@ -209,7 +264,7 @@ async def run_mcp_server(
                 params.command,
                 " ".join(params.args),
             )
-            stdio_streams_named = await stack.enter_async_context(stdio_client(params))
+            stdio_streams_named = await stack.enter_async_context(stdio_exit.client(params, name))
             session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
             proxy_named = await create_proxy_server(session_named)
 
@@ -258,6 +313,7 @@ async def run_mcp_server(
             log_level=mcp_settings.log_level.lower(),
         )
         http_server = uvicorn.Server(config)
+        stdio_exit.attach(http_server)
 
         # Print out the SSE URLs for all configured servers
         base_url = f"http://{mcp_settings.bind_host}:{mcp_settings.port}"
@@ -283,3 +339,5 @@ async def run_mcp_server(
             mcp_settings.port,
         )
         await http_server.serve()
+
+    stdio_exit.exit_if_exited()
