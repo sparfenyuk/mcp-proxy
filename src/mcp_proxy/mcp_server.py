@@ -218,6 +218,22 @@ class _StdioExitWatch:
             sys.exit(1)
 
 
+async def _setup_named_server(
+    name: str,
+    params: StdioServerParameters,
+    stack: contextlib.AsyncExitStack,
+    stdio_exit: _StdioExitWatch,
+) -> MCPServerSDK[object] | None:
+    """Set up a named proxy server, or return None if it fails to start."""
+    try:
+        stdio_streams = await stack.enter_async_context(stdio_exit.client(params, name))
+        session = await stack.enter_async_context(ClientSession(*stdio_streams))
+        return await create_proxy_server(session)
+    except Exception:
+        logger.exception("Failed to set up named server '%s'; skipping", name)
+        return None
+
+
 async def run_mcp_server(
     mcp_settings: MCPServerSettings,
     default_server_params: StdioServerParameters | None = None,
@@ -270,26 +286,22 @@ async def run_mcp_server(
                 params.command,
                 " ".join(params.args),
             )
-            try:
-                stdio_streams_named = await stack.enter_async_context(stdio_exit.client(params, name))
-                session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
-                proxy_named = await create_proxy_server(session_named)
-
-                instance_routes_named, http_manager_named = create_single_instance_routes(
-                    proxy_named,
-                    stateless_instance=mcp_settings.stateless,
-                )
-                await stack.enter_async_context(
-                    http_manager_named.run(),
-                )  # Manage lifespan by calling run()
-
-                # Mount these routes under /servers/<name>/
-                server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)
-                all_routes.append(server_mount)
-                _global_status["server_instances"][name] = "configured"
-            except Exception:
-                logger.exception("Failed to set up named server '%s'; skipping", name)
+            proxy_named = await _setup_named_server(name, params, stack, stdio_exit)
+            if proxy_named is None:
                 continue
+
+            instance_routes_named, http_manager_named = create_single_instance_routes(
+                proxy_named,
+                stateless_instance=mcp_settings.stateless,
+            )
+            await stack.enter_async_context(
+                http_manager_named.run(),
+            )  # Manage lifespan by calling run()
+
+            # Mount these routes under /servers/<name>/
+            server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)
+            all_routes.append(server_mount)
+            _global_status["server_instances"][name] = "configured"
 
         if not default_server_params and not named_server_params:
             logger.error("No servers configured to run.")
@@ -327,13 +339,7 @@ async def run_mcp_server(
 
         # Print out the SSE URLs for all configured servers
         base_url = f"http://{mcp_settings.bind_host}:{mcp_settings.port}"
-        sse_urls = []
-
-        # Add default server if configured
-        if default_server_params:
-            sse_urls.append(f"{base_url}/sse")
-
-        # Add named servers
+        sse_urls = [f"{base_url}/sse"] if default_server_params else []
         sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
 
         # Display the SSE URLs prominently
