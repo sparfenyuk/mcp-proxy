@@ -254,6 +254,9 @@ uv tool install git+https://github.com/sparfenyuk/mcp-proxy
 Starting from version 0.3.2, it's possible to pull and run the corresponding container image.
 Release images are published to GHCR and Docker Hub as multi-platform manifests for `linux/amd64` and `linux/arm64`;
 Docker selects the matching image for the host architecture automatically.
+The runtime image includes `uv` and `uvx`, so Python MCP servers can be launched
+without building a separate image to install these executables. Installing tools
+with dependencies that are not already cached still requires network access.
 
 ```bash
 docker run --rm -t ghcr.io/sparfenyuk/mcp-proxy:v0.12.0 --help
@@ -277,22 +280,27 @@ docker run --rm -t sparfenyuk/mcp-proxy:v0.12.0 --help
 
 ## Extending the container image
 
-You can extend the `mcp-proxy` container image to include additional executables. For instance, `uv` is not included by
-default, but you can create a custom image with it:
+You can extend the `mcp-proxy` container image to include additional executables or
+configure the bundled `uv`. For example, this image restricts `uv` to the system Python:
 
 ```Dockerfile
 # file: mcp-proxy.Dockerfile
 
 FROM ghcr.io/sparfenyuk/mcp-proxy:latest
 
-# Install the 'uv' package
-RUN python3 -m ensurepip && pip install --no-cache-dir uv
-
-ENV PATH="/usr/local/bin:$PATH" \
-    UV_PYTHON_PREFERENCE=only-system
-
-ENTRYPOINT ["catatonit", "--", "mcp-proxy"]
+ENV UV_PYTHON_PREFERENCE=only-system
 ```
+
+To check a locally built image, run the opt-in container tests:
+
+```bash
+docker build -t mcp-proxy:test .
+MCP_PROXY_TEST_IMAGE=mcp-proxy:test uv run --frozen pytest -q tests/test_container_image.py
+```
+
+These tests disable container network access, run a local wheel through `uvx`, and
+launch an MCP server through `uv` to list and call a tool through the proxy.
+Without `MCP_PROXY_TEST_IMAGE`, the container tests are skipped.
 
 ## Docker Compose Setup
 
