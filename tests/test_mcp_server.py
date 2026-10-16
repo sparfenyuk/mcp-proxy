@@ -24,6 +24,7 @@ from starlette.middleware.cors import CORSMiddleware
 from mcp_proxy.mcp_server import (
     DEFAULT_EXPOSE_HEADERS,
     MCPServerSettings,
+    _global_status,
     create_single_instance_routes,
     run_mcp_server,
 )
@@ -377,6 +378,65 @@ async def test_run_mcp_server_with_named_servers(
             "-m mcp_server",
         )
 
+        mock_server_instance.serve.assert_called_once()
+
+
+async def test_run_mcp_server_skips_named_server_that_fails_to_start(
+    mock_settings: MCPServerSettings,
+    mock_stdio_params: StdioServerParameters,
+) -> None:
+    """Test run_mcp_server skips a named server whose setup raises."""
+    broken_params = StdioServerParameters(
+        command="nonexistent-mcp-command",
+        args=[],
+        env={},
+        cwd="/tmp",  # noqa: S108
+    )
+    named_servers = {"good": mock_stdio_params, "broken": broken_params}
+
+    with (
+        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("uvicorn.Server") as mock_uvicorn_server,
+        patch("mcp_proxy.mcp_server.logger") as mock_logger,
+    ):
+        mock_stdio_context, mock_session_context, _, mock_http_manager, mock_routes = (
+            setup_async_context_mocks()
+        )
+
+        def _stdio_side_effect(params: StdioServerParameters) -> t.Any:  # noqa: ANN401
+            """Return a working stdio context, or raise for the broken server."""
+            if params.command == broken_params.command:
+                msg = "cannot start broken server"
+                raise RuntimeError(msg)
+            return mock_stdio_context
+
+        mock_stdio_client.side_effect = _stdio_side_effect
+        mock_client_session.return_value = mock_session_context
+
+        mock_proxy = AsyncMock()
+        mock_create_proxy.return_value = mock_proxy
+        mock_create_routes.return_value = (mock_routes, mock_http_manager)
+
+        mock_server_instance = AsyncMock()
+        mock_uvicorn_server.return_value = mock_server_instance
+
+        await run_mcp_server(mock_settings, None, named_servers)
+
+        # Only the healthy server was set up and registered; the broken one skipped.
+        assert mock_stdio_client.call_count == 2
+        assert mock_create_proxy.call_count == 1
+        assert mock_create_routes.call_count == 1
+        assert _global_status["server_instances"]["good"] == "configured"
+        assert "broken" not in _global_status["server_instances"]
+
+        # The failure was logged and the proxy kept serving.
+        mock_logger.exception.assert_any_call(
+            "Failed to set up named server '%s'; skipping",
+            "broken",
+        )
         mock_server_instance.serve.assert_called_once()
 
 
