@@ -270,22 +270,26 @@ async def run_mcp_server(
                 params.command,
                 " ".join(params.args),
             )
-            stdio_streams_named = await stack.enter_async_context(stdio_exit.client(params, name))
-            session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
-            proxy_named = await create_proxy_server(session_named)
+            try:
+                stdio_streams_named = await stack.enter_async_context(stdio_exit.client(params, name))
+                session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
+                proxy_named = await create_proxy_server(session_named)
 
-            instance_routes_named, http_manager_named = create_single_instance_routes(
-                proxy_named,
-                stateless_instance=mcp_settings.stateless,
-            )
-            await stack.enter_async_context(
-                http_manager_named.run(),
-            )  # Manage lifespan by calling run()
+                instance_routes_named, http_manager_named = create_single_instance_routes(
+                    proxy_named,
+                    stateless_instance=mcp_settings.stateless,
+                )
+                await stack.enter_async_context(
+                    http_manager_named.run(),
+                )  # Manage lifespan by calling run()
 
-            # Mount these routes under /servers/<name>/
-            server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)
-            all_routes.append(server_mount)
-            _global_status["server_instances"][name] = "configured"
+                # Mount these routes under /servers/<name>/
+                server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)
+                all_routes.append(server_mount)
+                _global_status["server_instances"][name] = "configured"
+            except Exception:
+                logger.exception("Failed to set up named server '%s'; skipping", name)
+                continue
 
         if not default_server_params and not named_server_params:
             logger.error("No servers configured to run.")
