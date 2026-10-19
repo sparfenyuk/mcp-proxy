@@ -531,7 +531,8 @@ async def test_complete(
 ) -> None:
     """Test complete."""
     async with session_generator(server_can_complete) as session:
-        await session.initialize()
+        initialize_result = await session.initialize()
+        assert initialize_result.capabilities.completions is not None
 
         complete_callback.return_value = None
         result = await session.complete(
@@ -550,6 +551,23 @@ async def test_complete(
             else None,
         )
         complete_callback.reset_mock()
+
+
+async def test_complete_not_supported(
+    session_generator: SessionContextManager,
+    server_can_list_tools: Server[object],
+) -> None:
+    """Do not advertise completions when the upstream only supports tools."""
+    async with session_generator(server_can_list_tools) as session:
+        result = await session.initialize()
+        assert result.capabilities.tools is not None
+        assert result.capabilities.completions is None
+
+        with pytest.raises(McpError, match="Method not found"):
+            await session.complete(
+                types.PromptReference(type="ref/prompt", name="prompt"),
+                argument={"name": "argument", "value": "value"},
+            )
 
 
 @pytest.mark.parametrize("tool_callback", [AsyncMock()])

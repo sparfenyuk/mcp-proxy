@@ -157,14 +157,16 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
 
     app.notification_handlers[types.ProgressNotification] = _send_progress_notification
 
-    async def _complete(req: types.CompleteRequest) -> types.ServerResult:
-        result = await remote_app.complete(
-            req.params.ref,
-            req.params.argument.model_dump(),
-            context_arguments=req.params.context.arguments if req.params.context else None,
-        )
-        return types.ServerResult(result)
+    if capabilities.completions is not None:
 
-    app.request_handlers[types.CompleteRequest] = _complete
+        async def _complete(req: types.CompleteRequest) -> types.ServerResult:
+            result = await remote_app.complete(
+                req.params.ref,
+                req.params.argument.model_dump(),
+                context_arguments=req.params.context.arguments if req.params.context else None,
+            )
+            return types.ServerResult(result)
+
+        app.request_handlers[types.CompleteRequest] = _complete
 
     return app
