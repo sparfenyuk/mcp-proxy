@@ -153,6 +153,7 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
             req.params.progressToken,
             req.params.progress,
             req.params.total,
+            message=req.params.message,
         )
 
     app.notification_handlers[types.ProgressNotification] = _send_progress_notification
