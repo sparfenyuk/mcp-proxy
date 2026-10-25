@@ -41,6 +41,9 @@ class MCPServerSettings:
     bind_host: str
     port: int
     stateless: bool = False
+    # "sdk" preserves the SDK's defaults; None explicitly disables a limit.
+    session_idle_timeout: float | Literal["sdk"] | None = "sdk"
+    max_sessions: int | Literal["sdk"] | None = "sdk"
     allow_origins: list[str] | None = None
     expose_headers: list[str] = field(default_factory=_default_expose_headers)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
@@ -76,6 +79,25 @@ async def _handle_status(_: Request) -> Response:
     return JSONResponse(_global_status)
 
 
+def _session_manager_options(
+    *,
+    stateless_instance: bool,
+    session_idle_timeout: float | Literal["sdk"] | None,
+    max_sessions: int | Literal["sdk"] | None,
+) -> dict[str, Any]:
+    """Forward only explicit stateful session-limit overrides to the SDK."""
+    if stateless_instance:
+        if session_idle_timeout != "sdk" or max_sessions != "sdk":
+            logger.warning("Session limits have no effect in stateless mode")
+        return {}
+    options: dict[str, Any] = {}
+    if session_idle_timeout != "sdk":
+        options["session_idle_timeout"] = session_idle_timeout
+    if max_sessions != "sdk":
+        options["max_sessions"] = max_sessions
+    return options
+
+
 async def _handle_healthz(_: Request) -> Response:
     """Respond to a transport liveness probe without allocating an MCP session."""
     return Response(status_code=204)
@@ -85,6 +107,8 @@ def create_single_instance_routes(
     mcp_server_instance: MCPServerSDK[object],
     *,
     stateless_instance: bool,
+    session_idle_timeout: float | Literal["sdk"] | None = "sdk",
+    max_sessions: int | Literal["sdk"] | None = "sdk",
 ) -> tuple[list[BaseRoute], StreamableHTTPSessionManager]:  # Return the manager itself
     """Create Starlette routes and the HTTP session manager for a single MCP server instance."""
     logger.debug(
@@ -93,11 +117,17 @@ def create_single_instance_routes(
     )
 
     sse_transport = SseServerTransport("/messages/")
+    manager_options = _session_manager_options(
+        stateless_instance=stateless_instance,
+        session_idle_timeout=session_idle_timeout,
+        max_sessions=max_sessions,
+    )
     http_session_manager = StreamableHTTPSessionManager(
         app=mcp_server_instance,
         event_store=None,
         json_response=True,
         stateless=stateless_instance,
+        **manager_options,
     )
 
     async def handle_sse_instance(request: Request) -> Response:
@@ -231,6 +261,11 @@ async def run_mcp_server(
     all_routes: list[BaseRoute] = [
         Route("/status", endpoint=_handle_status),  # Global status endpoint
     ]
+    route_options = _session_manager_options(
+        stateless_instance=mcp_settings.stateless,
+        session_idle_timeout=mcp_settings.session_idle_timeout,
+        max_sessions=mcp_settings.max_sessions,
+    )
     # Use AsyncExitStack to manage lifecycles of multiple components
     async with contextlib.AsyncExitStack() as stack:
         # Manage lifespans of all StreamableHTTPSessionManagers
@@ -257,6 +292,7 @@ async def run_mcp_server(
             instance_routes, http_manager = create_single_instance_routes(
                 proxy,
                 stateless_instance=mcp_settings.stateless,
+                **route_options,
             )
             await stack.enter_async_context(http_manager.run())  # Manage lifespan by calling run()
             all_routes.extend(instance_routes)
@@ -277,6 +313,7 @@ async def run_mcp_server(
             instance_routes_named, http_manager_named = create_single_instance_routes(
                 proxy_named,
                 stateless_instance=mcp_settings.stateless,
+                **route_options,
             )
             await stack.enter_async_context(
                 http_manager_named.run(),
