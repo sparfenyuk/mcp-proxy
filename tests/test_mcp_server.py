@@ -3,9 +3,11 @@
 
 import asyncio
 import contextlib
+import sys
 import typing as t
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
+import anyio
 import pytest
 import uvicorn
 from mcp import types
@@ -225,8 +227,18 @@ def mock_stdio_params() -> StdioServerParameters:
     )
 
 
+class _OpenStdout:
+    """Stdout of a stdio server that keeps running (run_mcp_server exits when it closes)."""
+
+    def __aiter__(self) -> "_OpenStdout":
+        return self
+
+    async def __anext__(self) -> t.Any:  # noqa: ANN401
+        await asyncio.Event().wait()
+
+
 def setup_async_context_mocks() -> tuple[
-    contextlib.AbstractContextManager[tuple[AsyncMock, AsyncMock]],
+    contextlib.AbstractContextManager[tuple[t.Any, AsyncMock]],
     contextlib.AbstractContextManager[tuple[AsyncMock, AsyncMock]],
     AsyncMock,
     MagicMock,
@@ -234,7 +246,7 @@ def setup_async_context_mocks() -> tuple[
 ]:
     """Helper function to set up async context manager mocks."""
     # Setup stdio client mock
-    mock_streams = (AsyncMock(), AsyncMock())
+    mock_streams = (_OpenStdout(), AsyncMock())
 
     # Setup client session mock
     mock_session = AsyncMock()
@@ -738,3 +750,26 @@ async def test_run_mcp_server_both_default_and_named_servers(
         )
 
         mock_server_instance.serve.assert_called_once()
+
+
+_EXITING_STDIO_SERVER = """
+import json, os, sys, threading
+for line in sys.stdin:
+    req = json.loads(line)
+    if req.get("method") == "initialize":
+        result = {"protocolVersion": req["params"]["protocolVersion"], "capabilities": {},
+                  "serverInfo": {"name": "exiting", "version": "1"}}
+        print(json.dumps({"jsonrpc": "2.0", "id": req["id"], "result": result}), flush=True)
+    elif req.get("method") == "notifications/initialized":
+        threading.Timer(1, os._exit, [0]).start()  # exit once the proxy has started
+"""
+
+
+async def test_run_mcp_server_exits_non_zero_when_stdio_server_exits() -> None:
+    """When the stdio server exits, the proxy must exit non-zero instead of serving errors."""
+    settings = MCPServerSettings(bind_host="127.0.0.1", port=0)
+    params = StdioServerParameters(command=sys.executable, args=["-c", _EXITING_STDIO_SERVER])
+
+    with anyio.fail_after(15), pytest.raises(SystemExit) as exc_info:
+        await run_mcp_server(settings, params, {})
+    assert exc_info.value.code == 1
