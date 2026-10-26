@@ -6,10 +6,10 @@ from typing import Any
 import httpx
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
-from mcp.server.stdio import stdio_server
 
 from .httpx_client import custom_httpx_client
 from .proxy_server import create_proxy_server
+from .stdio import stdio_client_lifespan
 
 
 async def run_streamablehttp_client(
@@ -28,6 +28,7 @@ async def run_streamablehttp_client(
             or a path to a certificate bundle.
     """
     async with (
+        stdio_client_lifespan() as (read_stream, write_stream),
         streamablehttp_client(
             url=url,
             headers=headers,
@@ -37,9 +38,8 @@ async def run_streamablehttp_client(
         ClientSession(read, write) as session,
     ):
         app = await create_proxy_server(session)
-        async with stdio_server() as (read_stream, write_stream):
-            await app.run(
-                read_stream,
-                write_stream,
-                app.create_initialization_options(),
-            )
+        await app.run(
+            read_stream,
+            write_stream,
+            app.create_initialization_options(),
+        )
