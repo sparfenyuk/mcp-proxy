@@ -109,6 +109,41 @@ def server_can_list_tools(server: Server[object], tool: types.Tool) -> Server[ob
     return server
 
 
+@pytest.mark.parametrize("cursor", ["8", ""])
+async def test_list_tools_pagination(
+    session_generator: SessionContextManager,
+    server: Server[object],
+    cursor: str,
+) -> None:
+    """驗證分頁參數、第二頁工具及終止游標可穿過代理."""
+    tools = [types.Tool(name=f"tool-{index}", inputSchema={}) for index in range(14)]
+    received_params: list[types.PaginatedRequestParams | None] = []
+
+    async def list_tools(request: types.ListToolsRequest) -> types.ServerResult:
+        received_params.append(request.params)
+        if request.params is not None and request.params.cursor == cursor:
+            return types.ServerResult(types.ListToolsResult(tools=tools[8:]))
+        return types.ServerResult(types.ListToolsResult(tools=tools[:8], nextCursor=cursor))
+
+    server.request_handlers[types.ListToolsRequest] = list_tools
+
+    async with session_generator(server) as session:
+        await session.initialize()
+        first_page = await session.list_tools()
+        assert first_page.tools == tools[:8]
+        assert first_page.nextCursor == cursor
+
+        params = types.PaginatedRequestParams(
+            cursor=first_page.nextCursor,
+            _meta=types.RequestParams.Meta(progressToken="pagination"),
+        )
+        last_page = await session.list_tools(params=params)
+        assert last_page.tools == tools[8:]
+        assert last_page.nextCursor is None
+        assert first_page.tools + last_page.tools == tools
+        assert received_params == [None, params]
+
+
 @pytest.fixture
 def server_can_call_tool(
     server_can_list_tools: Server[object],
