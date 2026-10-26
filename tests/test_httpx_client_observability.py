@@ -107,3 +107,59 @@ def test_request_observability_tracks_per_process_requests_per_minute(
     assert "requests_per_minute=1" in safe[0]
     assert "destination_class=private-network request_type=POST status=200" in safe[1]
     assert "requests_per_minute=2" in safe[1]
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("http://localhost:3020/mcp", "loopback"),
+        ("http://127.0.0.1:3020/mcp", "loopback"),
+        ("http://[::1]/mcp", "loopback"),
+        ("https://10.0.0.5/mcp", "private-network"),
+        ("https://169.254.10.1/mcp", "private-network"),
+        ("http://[fd00::1]/mcp", "private-network"),
+        ("https://8.8.8.8/mcp", "public-network"),
+        ("https://example.com/mcp?token=secret", "public-network"),
+    ],
+)
+def test_destination_classification_never_needs_sensitive_paths(url: str, expected: str) -> None:
+    """Cover the network classification branches with no host disclosure."""
+    request = httpx.Request("POST", url)
+    assert httpx_client_module._destination_class(request) == expected  # noqa: SLF001
+
+
+def test_request_rate_window_discards_old_requests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Old requests stop contributing to the coarse per-minute count."""
+    clock = iter([100.0, 130.0, 161.0])
+    monkeypatch.setattr(httpx_client_module.time, "monotonic", lambda: next(clock))
+    measure = httpx_client_module._record_request_rate  # noqa: SLF001
+    expected_count_after_expiry = 2
+    assert measure() == 1
+    assert measure() == expected_count_after_expiry
+    assert measure() == expected_count_after_expiry
+
+
+def test_retry_after_rejects_unicode_and_unbounded_numbers() -> None:
+    """Never echo malicious or oversized Retry-After header data."""
+    assert _sanitize_retry_after(chr(0xFF11) + chr(0xFF12)) == "-"
+    assert _sanitize_retry_after(chr(0x661) + chr(0x662)) == "-"
+    assert _sanitize_retry_after("") == "-"
+    assert _sanitize_retry_after("0") == "0"
+
+
+@patch("mcp_proxy.httpx_client.httpx.AsyncClient")
+def test_response_without_request_hook_fails_privacy_safe(
+    mock_async_client: Mock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Responses missing request observability metadata must still redact."""
+    hooks = _event_hooks(mock_async_client)
+    request = httpx.Request("DELETE", "https://service.example/private?access=secret")
+    response = httpx.Response(503, request=request, headers={"Retry-After": "Bearer credential"})
+    caplog.set_level(logging.INFO, logger="mcp_proxy.httpx_client")
+    _run_hook(hooks["response"][0], response)
+    joined = "\n".join(record.getMessage() for record in caplog.records)
+    assert "destination_class=public-network request_type=DELETE status=503" in joined
+    assert "retry_after=- requests_per_minute=0" in joined
+    assert "service.example" not in joined
+    assert "private" not in joined
+    assert "Bearer credential" not in joined
