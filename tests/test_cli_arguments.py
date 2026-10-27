@@ -106,3 +106,19 @@ def test_custom_httpx_client_cert_path(mock_async_client: Mock) -> None:
     custom_httpx_client(verify_ssl="/tmp/cert.pem")  # noqa: S108
     kwargs = mock_async_client.call_args.kwargs
     assert kwargs["verify"] == "/tmp/cert.pem"  # noqa: S108
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "nan", "inf", "-inf", "invalid"])
+def test_initialization_timeout_rejects_invalid_values(parser: ArgumentParser, value: str) -> None:
+    """Initialization deadlines must be finite and positive."""
+    with pytest.raises(SystemExit):
+        parser.parse_args([f"--initialization-timeout={value}"])
+
+
+@pytest.mark.parametrize("value", [None, "2.5"])
+def test_initialization_timeout_settings(parser: ArgumentParser, value: str | None) -> None:
+    """Propagate the deadline while preserving the unlimited default."""
+    args = parser.parse_args([] if value is None else ["--initialization-timeout", value])
+    assert _create_mcp_settings(args).initialization_timeout == (
+        None if value is None else float(value)
+    )

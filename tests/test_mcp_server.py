@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import sys
 import typing as t
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import anyio
@@ -765,11 +766,35 @@ for line in sys.stdin:
 """
 
 
-async def test_run_mcp_server_exits_non_zero_when_stdio_server_exits() -> None:
+@pytest.mark.parametrize("named", [False, True])
+async def test_run_mcp_server_exits_non_zero_when_stdio_server_exits(*, named: bool) -> None:
     """When the stdio server exits, the proxy must exit non-zero instead of serving errors."""
-    settings = MCPServerSettings(bind_host="127.0.0.1", port=0)
+    settings = MCPServerSettings(bind_host="127.0.0.1", port=0, initialization_timeout=0.5)
     params = StdioServerParameters(command=sys.executable, args=["-c", _EXITING_STDIO_SERVER])
 
     with anyio.fail_after(15), pytest.raises(SystemExit) as exc_info:
-        await run_mcp_server(settings, params, {})
+        await run_mcp_server(
+            settings, None if named else params, {"healthy": params} if named else {}
+        )
     assert exc_info.value.code == 1
+
+
+@pytest.mark.parametrize("named", [False, True])
+async def test_stdio_initialization_timeout_reaps_child(tmp_path: Path, *, named: bool) -> None:
+    """An unresponsive child must fail startup and exit when its stdin closes."""
+    received = tmp_path / "initialize-received"
+    stopped = tmp_path / "child-stopped"
+    child = f"""
+import pathlib, sys
+for line in sys.stdin:
+    pathlib.Path({str(received)!r}).write_text(line)
+pathlib.Path({str(stopped)!r}).touch()
+"""
+    settings = MCPServerSettings(bind_host="127.0.0.1", port=0, initialization_timeout=0.5)
+    params = StdioServerParameters(command=sys.executable, args=["-c", child])
+    with anyio.fail_after(3), pytest.RaisesGroup(TimeoutError, flatten_subgroups=True):
+        await run_mcp_server(
+            settings, None if named else params, {"silent": params} if named else {}
+        )
+    assert '"method":"initialize"' in received.read_text()
+    assert stopped.exists()

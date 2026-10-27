@@ -44,6 +44,7 @@ class MCPServerSettings:
     allow_origins: list[str] | None = None
     expose_headers: list[str] = field(default_factory=_default_expose_headers)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    initialization_timeout: float | None = None
 
 
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
@@ -218,7 +219,7 @@ class _StdioExitWatch:
             sys.exit(1)
 
 
-async def run_mcp_server(
+async def run_mcp_server(  # noqa: PLR0915
     mcp_settings: MCPServerSettings,
     default_server_params: StdioServerParameters | None = None,
     named_server_params: dict[str, StdioServerParameters] | None = None,
@@ -252,7 +253,8 @@ async def run_mcp_server(
                 stdio_exit.client(default_server_params, "default"),
             )
             session = await stack.enter_async_context(ClientSession(*stdio_streams))
-            proxy = await create_proxy_server(session)
+            with anyio.fail_after(mcp_settings.initialization_timeout):
+                proxy = await create_proxy_server(session)
 
             instance_routes, http_manager = create_single_instance_routes(
                 proxy,
@@ -272,7 +274,8 @@ async def run_mcp_server(
             )
             stdio_streams_named = await stack.enter_async_context(stdio_exit.client(params, name))
             session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
-            proxy_named = await create_proxy_server(session_named)
+            with anyio.fail_after(mcp_settings.initialization_timeout):
+                proxy_named = await create_proxy_server(session_named)
 
             instance_routes_named, http_manager_named = create_single_instance_routes(
                 proxy_named,
