@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import json
 import logging
+import math
 import os
 import shlex
 import sys
@@ -44,6 +45,14 @@ def _normalize_verify_ssl(value: str | bool | None) -> bool | str | None:
         return False
 
     return value
+
+
+def _positive_timeout(value: str) -> float:
+    """Parse a finite, positive timeout in seconds."""
+    timeout = float(value)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise argparse.ArgumentTypeError("timeout must be a finite number greater than zero")
+    return timeout
 
 
 def _setup_argument_parser() -> argparse.ArgumentParser:
@@ -253,6 +262,15 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         "--host",
         default="127.0.0.1",
         help="Host to expose an SSE server on. Default is 127.0.0.1",
+    )
+    mcp_server_group.add_argument(
+        "--initialization-timeout",
+        type=_positive_timeout,
+        metavar="SECONDS",
+        help=(
+            "Maximum time to initialize each stdio server. By default, wait indefinitely. "
+            "A timeout fails proxy startup; it does not limit tool calls."
+        ),
     )
     mcp_server_group.add_argument(
         "--stateless",
@@ -466,6 +484,7 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         bind_host=args_parsed.host if args_parsed.host is not None else args_parsed.sse_host,
         port=args_parsed.port if args_parsed.port is not None else args_parsed.sse_port,
         stateless=args_parsed.stateless,
+        initialization_timeout=args_parsed.initialization_timeout,
         allow_origins=args_parsed.allow_origin if len(args_parsed.allow_origin) > 0 else None,
         expose_headers=expose_headers,
         log_level="DEBUG" if args_parsed.debug else args_parsed.log_level,

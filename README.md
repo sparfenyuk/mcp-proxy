@@ -131,6 +131,7 @@ Arguments
 | `--pass-environment`                 | No                         | Pass through all environment variables when spawning the server                               | --no-pass-environment                       |
 | `--allow-origin`                     | No                         | Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.   | --allow-origin "\*"                         |
 | `--expose-header`                    | No                         | Headers added to `Access-Control-Expose-Headers`. Can be used multiple times. Defaults to `mcp-session-id`. | --expose-header Custom-Header              |
+| `--initialization-timeout SECONDS`   | No                         | Deadline for each stdio server initialization; default is unlimited                           | --initialization-timeout 30                 |
 | `--stateless`                        | No                         | Enable stateless mode for streamable http transports. Default is False                        | --no-stateless                              |
 | `--named-server NAME COMMAND_STRING` | No                         | Defines a named stdio server.                                                                 | --named-server fetch 'uvx mcp-server-fetch' |
 | `--named-server-config FILE_PATH`    | No                         | Path to a JSON file defining named stdio servers.                                             | --named-server-config /path/to/servers.json |
@@ -374,6 +375,9 @@ stdio client options:
 SSE server options:
   --port PORT           Port to expose an SSE server on. Default is a random port
   --host HOST           Host to expose an SSE server on. Default is 127.0.0.1
+  --initialization-timeout SECONDS
+                        Maximum time to initialize each stdio server. By default, wait indefinitely.
+                        A timeout fails proxy startup; it does not limit tool calls.
   --stateless, --no-stateless
                         Enable stateless mode for streamable http transports. Default is False
   --sse-port SSE_PORT   (deprecated) Same as --port
