@@ -34,7 +34,7 @@ def load_named_server_configs_from_file(
     logger.info("Loading named server configurations from: %s", config_file_path)
 
     try:
-        with Path(config_file_path).open() as f:
+        with Path(config_file_path).open(encoding="utf-8-sig") as f:
             config_data = json.load(f)
     except FileNotFoundError:
         logger.exception("Configuration file not found: %s", config_file_path)
