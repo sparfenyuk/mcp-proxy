@@ -274,6 +274,7 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
     mcp_server_group.add_argument(
         "--allow-origin",
         nargs="+",
+        action="extend",
         default=[],
         help=(
             "Allowed origins for the SSE server. Can be used multiple times. "
