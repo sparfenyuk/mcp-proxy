@@ -26,10 +26,11 @@ classifiers = [
     "Topic :: Utilities",
     "Typing :: Typed",
 ]
-version = "0.13.1"
+version = "0.13.2"
 requires-python = ">=3.10"
 dependencies = [
     "anyio>=4.14.2",
+    "certifi>=2026.10.19",
     "cryptography>=50.0.0",
     "httpx-auth>=0.23.1",
     "mcp>=1.27.1,<2",
