@@ -247,3 +247,20 @@ def test_config_file_is_empty_string() -> None:
         path = Path(tmp_config_path)
         if path.exists():
             path.unlink()
+
+
+@pytest.mark.parametrize("bom", [b"", b"\xef\xbb\xbf"], ids=["no-bom", "bom"])
+def test_load_utf8_config(tmp_path: Path, bom: bytes) -> None:
+    """Test loading a UTF-8 config file with non-ASCII content, with and without a BOM."""
+    config_content = {
+        "mcpServers": {
+            "server1": {"command": "echo", "args": ["café"], "env": {"GREETING": "안녕"}}
+        },
+    }
+    tmp_config_path = tmp_path / "config.json"
+    tmp_config_path.write_bytes(bom + json.dumps(config_content, ensure_ascii=False).encode())
+
+    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+
+    assert loaded_params["server1"].args == ["café"]
+    assert loaded_params["server1"].env == {"GREETING": "안녕"}

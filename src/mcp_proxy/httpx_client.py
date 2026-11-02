@@ -12,7 +12,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-def custom_httpx_client(  # noqa: C901
+def custom_httpx_client(
     headers: dict[str, str] | None = None,
     timeout: httpx.Timeout | None = None,
     auth: httpx.Auth | None = None,
@@ -35,22 +35,11 @@ def custom_httpx_client(  # noqa: C901
     """
     # Set MCP defaults (copied from original implementation)
     kwargs: dict[str, Any] = {
-        "follow_redirects": True,
+        "timeout": timeout if timeout is not None else httpx.Timeout(30.0),
+        "headers": headers,
+        "auth": auth,
     }
-
-    # Handle timeout
-    if timeout is None:
-        kwargs["timeout"] = httpx.Timeout(30.0)
-    else:
-        kwargs["timeout"] = timeout
-
-    # Handle headers
-    if headers is not None:
-        kwargs["headers"] = headers
-
-    # Handle authentication
-    if auth is not None:
-        kwargs["auth"] = auth
+    kwargs["follow_redirects"] = False
 
     if verify_ssl is not None:
         normalized_verify: bool | str
@@ -85,33 +74,24 @@ def custom_httpx_client(  # noqa: C901
         logger.info(
             "HTTP Request: %s %s",
             request.method,
-            request.url,
+            request.url.copy_with(username=None, password=None, query=None, fragment=None),
         )
-
-        # Log headers (be careful with sensitive data)
-        if logger.isEnabledFor(logging.DEBUG) or True:
-            safe_headers = {}
-            for key, value in request.headers.items():
-                # Mask sensitive headers
-                if key.lower() in ("authorization", "x-api-key", "cookie"):
-                    safe_headers[key] = "***MASKED***"
-                else:
-                    safe_headers[key] = value
-            logger.info("Request Headers: %s", safe_headers)
 
     async def log_response(response: httpx.Response) -> None:
         """Log HTTP response details."""
-        logger.debug(
+        safe_url = response.request.url.copy_with(
+            username=None,
+            password=None,
+            query=None,
+            fragment=None,
+        )
+        logger.info(
             "HTTP Response: %s %s - %d %s",
             response.request.method,
-            response.request.url,
+            safe_url,
             response.status_code,
             response.reason_phrase,
         )
-
-        # Log response headers
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("Response Headers: %s", dict(response.headers))
 
     # Add event hooks
     kwargs["event_hooks"] = {
