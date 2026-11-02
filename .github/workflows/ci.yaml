@@ -92,15 +92,24 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - run: mkdir coverage
       - run: uv sync --frozen --all-extras --all-packages
       - run: docker build -t mcp-proxy:test .
-      - run: uv run --frozen pytest -q tests/test_container_image.py
+      - run: uv run --frozen coverage run -m pytest -q tests/test_container_image.py
         env:
           MCP_PROXY_TEST_IMAGE: mcp-proxy:test
+          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-container
+
+      - name: store coverage files
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-container
+          path: coverage
+          include-hidden-files: true
 
   coverage:
     runs-on: ubuntu-latest
-    needs: [test]
+    needs: [test, container]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
