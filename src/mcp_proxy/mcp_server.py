@@ -317,6 +317,7 @@ async def run_mcp_server(
             host=mcp_settings.bind_host,
             port=mcp_settings.port,
             log_level=mcp_settings.log_level.lower(),
+            timeout_graceful_shutdown=5,
         )
         http_server = uvicorn.Server(config)
         stdio_exit.attach(http_server)

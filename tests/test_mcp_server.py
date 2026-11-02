@@ -591,6 +591,9 @@ async def test_run_mcp_server_uvicorn_config(
         assert call_args.kwargs["host"] == mock_settings.bind_host
         assert call_args.kwargs["port"] == mock_settings.port
         assert call_args.kwargs["log_level"] == mock_settings.log_level.lower()
+        # SIGTERM must not hang on in-flight connections: uvicorn's default
+        # graceful-shutdown timeout is unbounded (None). See #281.
+        assert call_args.kwargs["timeout_graceful_shutdown"] == 5
 
 
 async def test_run_mcp_server_global_status_updates(
