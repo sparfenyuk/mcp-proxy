@@ -27,6 +27,7 @@ RUN apk add --update --no-cache catatonit
 # Final stage with explicit platform specification
 FROM python:3.13-alpine
 
+COPY --from=uv /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
 COPY --from=uv --chown=app:app /app/.venv /app/.venv
 COPY --from=uv /usr/bin/catatonit /usr/bin/
 COPY --from=uv /usr/libexec/podman/catatonit /usr/libexec/podman/
