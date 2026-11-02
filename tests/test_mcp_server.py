@@ -22,6 +22,7 @@ from mcp.client.stdio import StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client, streamablehttp_client
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from sse_starlette import sse as sse_module
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
@@ -276,16 +277,119 @@ def make_background_server(*, debug: bool = False, stateless: bool = False) -> B
     return BackgroundServer(config)
 
 
+@contextlib.asynccontextmanager
+async def _isolated_sse_server_lifetime() -> t.AsyncIterator[set[asyncio.Task[t.Any]]]:
+    """Settle this test's real SSE shutdown watcher before restoring shared state."""
+    app_status = sse_module.AppStatus
+    original_watcher = sse_module._shutdown_watcher  # noqa: SLF001
+    owned_watchers: set[asyncio.Task[t.Any]] = set()
+    watcher_started = asyncio.Event()
+
+    async def owned_shutdown_watcher() -> None:
+        task = asyncio.current_task()
+        if task is not None:
+            owned_watchers.add(task)
+        watcher_started.set()
+        await original_watcher()
+
+    def is_shutdown_watcher(task: asyncio.Task[t.Any]) -> bool:
+        return getattr(task.get_coro(), "cr_code", None) in {
+            original_watcher.__code__,
+            owned_shutdown_watcher.__code__,
+        }
+
+    if any(is_shutdown_watcher(task) for task in asyncio.all_tasks()):
+        raise RuntimeError("cannot isolate an SSE lifetime with an unowned shutdown watcher")
+
+    previous_state = (
+        app_status.should_exit,
+        app_status.enable_automatic_graceful_drain,
+        app_status.original_handler,
+    )
+
+    app_status.should_exit = False
+    app_status.enable_automatic_graceful_drain = True
+    sse_module._shutdown_watcher = owned_shutdown_watcher  # noqa: SLF001
+    try:
+        yield owned_watchers
+    finally:
+        sse_module._shutdown_watcher = original_watcher  # noqa: SLF001
+        with anyio.CancelScope(shield=True):
+            owned_watchers.update(
+                task
+                for task in asyncio.all_tasks()
+                if getattr(task.get_coro(), "cr_code", None) is owned_shutdown_watcher.__code__
+            )
+            if any(not task.done() for task in owned_watchers) and not watcher_started.is_set():
+                await watcher_started.wait()
+            for task in owned_watchers:
+                if not task.done():
+                    task.cancel()
+            if owned_watchers:
+                await asyncio.gather(*owned_watchers, return_exceptions=True)
+            unowned_watchers = {
+                task for task in asyncio.all_tasks() if is_shutdown_watcher(task)
+            } - owned_watchers
+            if unowned_watchers:
+                raise RuntimeError(
+                    "cannot restore SSE state while an unowned shutdown watcher is live"
+                )
+            (
+                app_status.should_exit,
+                app_status.enable_automatic_graceful_drain,
+                app_status.original_handler,
+            ) = previous_state
+
+
 async def test_sse_transport() -> None:
     """Test basic glue code for the SSE transport and a fake MCP server."""
-    server = make_background_server(debug=True)
-    async with server.run_in_background():
-        sse_url = f"{server.url}/sse"
-        async with sse_client(url=sse_url) as streams, ClientSession(*streams) as session:
+    async with _isolated_sse_server_lifetime() as watchers:
+        server = make_background_server(debug=True)
+        async with server.run_in_background():
+            sse_url = f"{server.url}/sse"
+            async with sse_client(url=sse_url) as streams, ClientSession(*streams) as session:
+                await session.initialize()
+                response = await session.list_prompts()
+                assert len(response.prompts) == 1
+                assert response.prompts[0].name == "prompt1"
+    assert watchers
+    assert all(task.done() for task in watchers)
+
+
+async def test_sse_shutdown_state_does_not_poison_next_server_lifetime() -> None:
+    """A late watcher from one server must not terminate the next server's SSE stream."""
+    app_status = sse_module.AppStatus
+    async with _isolated_sse_server_lifetime() as first_watchers:
+        first_server = make_background_server()
+        async with (
+            first_server.run_in_background(),
+            sse_client(url=f"{first_server.url}/sse") as streams,
+            ClientSession(*streams) as session,
+        ):
             await session.initialize()
-            response = await session.list_prompts()
-            assert len(response.prompts) == 1
-            assert response.prompts[0].name == "prompt1"
+            prompts = await session.list_prompts()
+            assert [prompt.name for prompt in prompts.prompts] == ["prompt1"]
+
+    assert first_watchers
+    assert all(task.done() for task in first_watchers)
+    assert not app_status.should_exit
+
+    async with _isolated_sse_server_lifetime() as second_watchers:
+        second_server = make_background_server()
+        async with second_server.run_in_background():
+            with anyio.fail_after(15):
+                async with (
+                    sse_client(url=f"{second_server.url}/sse") as streams,
+                    ClientSession(*streams) as session,
+                ):
+                    await session.initialize()
+                    prompts = await session.list_prompts()
+                    assert [prompt.name for prompt in prompts.prompts] == ["prompt1"]
+                    result = await session.call_tool("echo", {"message": "second-server"})
+                    assert result.content[0].text == "Echo: second-server"
+    assert second_watchers
+    assert all(task.done() for task in second_watchers)
+    assert not app_status.should_exit
 
 
 @pytest.mark.parametrize("path_suffix", ["/mcp/", "/mcp"])
@@ -311,7 +415,7 @@ async def test_http_transport(path_suffix: str) -> None:
 
 
 @pytest.mark.parametrize(("level", "debug"), [("INFO", False), ("DEBUG", True)])
-async def test_run_mcp_server_keeps_transport_secrets_out_of_logs(
+async def test_run_mcp_server_keeps_transport_secrets_out_of_logs(  # noqa: PLR0915
     level: str,
     debug: bool,
     monkeypatch: pytest.MonkeyPatch,
@@ -400,11 +504,12 @@ async def test_run_mcp_server_keeps_transport_secrets_out_of_logs(
         _setup_logging(level=level, debug=debug)
         monkeypatch.setattr("mcp_proxy.mcp_server.uvicorn.Server", CapturingBackgroundServer)
         params = StdioServerParameters(command=sys.executable, args=["-c", _LOGGING_STDIO_SERVER])
-        await run_mcp_server(
-            MCPServerSettings(bind_host="127.0.0.1", port=0, log_level=level),
-            params,
-            {"named": params},
-        )
+        async with _isolated_sse_server_lifetime():
+            await run_mcp_server(
+                MCPServerSettings(bind_host="127.0.0.1", port=0, log_level=level),
+                params,
+                {"named": params},
+            )
         captured = capsys.readouterr()
         output = captured.out + captured.err
     finally:

@@ -1,8 +1,12 @@
+# Copyright (c) 2024 Sergey Parfenyuk
+
 """Expose a remote Streamable HTTP server over local MCP stdio."""
 
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from functools import partial
-from typing import Any
+from typing import Any, cast
 
 import anyio
 import httpx
@@ -11,6 +15,7 @@ from mcp.client.streamable_http import streamablehttp_client
 
 from .httpx_client import custom_httpx_client
 from .proxy_server import create_proxy_server
+from .reconnecting_session import ReconnectingClientSession, SessionObserver
 from .stdio import stdio_client_lifespan
 
 logger = logging.getLogger(__name__)
@@ -74,6 +79,24 @@ def _termination_bounded_httpx_client(
     )
 
 
+def _session_httpx_client_factory(
+    observer: SessionObserver,
+    headers: dict[str, str] | None = None,
+    timeout: httpx.Timeout | None = None,
+    auth: httpx.Auth | None = None,
+    verify_ssl: bool | str | None = None,
+) -> httpx.AsyncClient:
+    """Add one generation observer while retaining the shared client setup."""
+    client = _termination_bounded_httpx_client(
+        headers=headers,
+        timeout=timeout,
+        auth=auth,
+        verify_ssl=verify_ssl,
+    )
+    client.event_hooks.setdefault("response", []).append(observer.observe)
+    return client
+
+
 async def run_streamablehttp_client(
     url: str,
     headers: dict[str, Any] | None = None,
@@ -89,17 +112,29 @@ async def run_streamablehttp_client(
         verify_ssl: Control SSL verification. Use False to disable
             or a path to a certificate bundle.
     """
+
+    @asynccontextmanager
+    async def connect(observer: SessionObserver) -> AsyncIterator[ClientSession]:
+        async with (
+            streamablehttp_client(
+                url=url,
+                headers=headers,
+                auth=auth,
+                httpx_client_factory=partial(
+                    _session_httpx_client_factory,
+                    observer,
+                    verify_ssl=verify_ssl,
+                ),
+            ) as (read, write, _),
+            ClientSession(read, write) as session,
+        ):
+            yield session
+
     async with (
         stdio_client_lifespan() as (read_stream, write_stream),
-        streamablehttp_client(
-            url=url,
-            headers=headers,
-            auth=auth,
-            httpx_client_factory=partial(_termination_bounded_httpx_client, verify_ssl=verify_ssl),
-        ) as (read, write, _),
-        ClientSession(read, write) as session,
+        ReconnectingClientSession(connect) as session,
     ):
-        app = await create_proxy_server(session)
+        app = await create_proxy_server(cast("ClientSession", session))
         await app.run(
             read_stream,
             write_stream,
