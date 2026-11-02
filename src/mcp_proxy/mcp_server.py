@@ -458,7 +458,47 @@ class _StdioExitWatch:
             sys.exit(1)
 
 
-async def run_mcp_server(  # noqa: PLR0915
+async def _prepare_stdio_server_routes(
+    stack: contextlib.AsyncExitStack,
+    stdio_exit: _StdioExitWatch,
+    params: StdioServerParameters,
+    settings: MCPServerSettings,
+    name: str,
+) -> list[BaseRoute]:
+    """Prepare one stdio backend and register its lifetimes on the shared stack."""
+    stdio_streams = await stack.enter_async_context(stdio_exit.client(params, name))
+    session = await stack.enter_async_context(ClientSession(*stdio_streams))
+    with anyio.fail_after(settings.initialization_timeout):
+        proxy = await create_proxy_server(session)
+
+    instance_routes, http_manager = create_single_instance_routes(
+        proxy,
+        stateless_instance=settings.stateless,
+    )
+    await stack.enter_async_context(http_manager.run())
+    return instance_routes
+
+
+def _log_sse_urls(
+    settings: MCPServerSettings,
+    default_server_params: StdioServerParameters | None,
+    named_server_params: dict[str, StdioServerParameters],
+) -> None:
+    """Log the SSE endpoints for each configured backend."""
+    base_url = f"http://{settings.bind_host}:{settings.port}"
+    sse_urls = []
+
+    if default_server_params:
+        sse_urls.append(f"{base_url}/sse")
+    sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
+
+    if sse_urls:
+        logger.info("Serving MCP Servers via SSE:")
+        for url in sse_urls:
+            logger.info("  - %s", url)
+
+
+async def run_mcp_server(
     mcp_settings: MCPServerSettings,
     default_server_params: StdioServerParameters | None = None,
     named_server_params: dict[str, StdioServerParameters] | None = None,
@@ -494,18 +534,13 @@ async def run_mcp_server(  # noqa: PLR0915
                 default_server_params.command,
                 " ".join(default_server_params.args),
             )
-            stdio_streams = await stack.enter_async_context(
-                stdio_exit.client(default_server_params, "default"),
+            instance_routes = await _prepare_stdio_server_routes(
+                stack,
+                stdio_exit,
+                default_server_params,
+                mcp_settings,
+                "default",
             )
-            session = await stack.enter_async_context(ClientSession(*stdio_streams))
-            with anyio.fail_after(mcp_settings.initialization_timeout):
-                proxy = await create_proxy_server(session)
-
-            instance_routes, http_manager = create_single_instance_routes(
-                proxy,
-                stateless_instance=mcp_settings.stateless,
-            )
-            await stack.enter_async_context(http_manager.run())  # Manage lifespan by calling run()
             all_routes.extend(instance_routes)
             _global_status["server_instances"]["default"] = "configured"
 
@@ -517,18 +552,13 @@ async def run_mcp_server(  # noqa: PLR0915
                 params.command,
                 " ".join(params.args),
             )
-            stdio_streams_named = await stack.enter_async_context(stdio_exit.client(params, name))
-            session_named = await stack.enter_async_context(ClientSession(*stdio_streams_named))
-            with anyio.fail_after(mcp_settings.initialization_timeout):
-                proxy_named = await create_proxy_server(session_named)
-
-            instance_routes_named, http_manager_named = create_single_instance_routes(
-                proxy_named,
-                stateless_instance=mcp_settings.stateless,
+            instance_routes_named = await _prepare_stdio_server_routes(
+                stack,
+                stdio_exit,
+                params,
+                mcp_settings,
+                name,
             )
-            await stack.enter_async_context(
-                http_manager_named.run(),
-            )  # Manage lifespan by calling run()
 
             # Mount these routes under /servers/<name>/
             server_mount = Mount(f"/servers/{name}", routes=instance_routes_named)
@@ -577,23 +607,7 @@ async def run_mcp_server(  # noqa: PLR0915
         http_server = uvicorn.Server(config)
         stdio_exit.attach(http_server)
 
-        # Print out the SSE URLs for all configured servers
-        base_url = f"http://{mcp_settings.bind_host}:{mcp_settings.port}"
-        sse_urls = []
-
-        # Add default server if configured
-        if default_server_params:
-            sse_urls.append(f"{base_url}/sse")
-
-        # Add named servers
-        sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
-
-        # Display the SSE URLs prominently
-        if sse_urls:
-            # Using print directly for user visibility, with noqa to ignore linter warnings
-            logger.info("Serving MCP Servers via SSE:")
-            for url in sse_urls:
-                logger.info("  - %s", url)
+        _log_sse_urls(mcp_settings, default_server_params, named_server_params)
 
         logger.debug(
             "Serving incoming MCP requests on %s:%s",
