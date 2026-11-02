@@ -114,10 +114,10 @@ graph LR
 
 ### 2.1 Configuration
 
-This mode requires the `--sse-port` argument to be set. The `--sse-host` argument can be set to specify the host IP
-address that the SSE server will listen on. Additional environment variables can be passed to the local stdio server
-using the `--env` argument. The command line arguments for the local stdio server must be passed after the `--`
-separator.
+Configure the HTTP server with `--host` and `--port`; the defaults are `127.0.0.1` and an available port. A wildcard
+bind such as `0.0.0.0` requires `--allowed-host` entries for the Host authorities clients will use. The deprecated
+`--sse-host` and `--sse-port` options are ineffective; use `--host` and `--port` instead. Additional environment
+variables can be passed to the local stdio server using `--env`. Put local server arguments after the `--` separator.
 
 Arguments
 
@@ -125,7 +125,8 @@ Arguments
 | ------------------------------------ | -------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | `command_or_url`                     | Yes                        | The command to spawn the MCP stdio server                                                     | uvx mcp-server-fetch                        |
 | `--port`                             | No, random available       | The MCP server port to listen on                                                              | 8080                                        |
-| `--host`                             | No, `127.0.0.1` by default | The host IP address that the MCP server will listen on                                        | 0.0.0.0                                     |
+| `--host`                             | No, `127.0.0.1` by default | Host IP address to bind. Wildcard binds require explicit `--allowed-host` authorities.       | 0.0.0.0                                     |
+| `--allowed-host`                     | No                         | Additional trusted Host authority; repeat for each hostname/IP and port clients use.         | --allowed-host mcp.example.com:8080         |
 | `--env`                              | No                         | Additional environment variables to pass to the MCP stdio server. Can be used multiple times. | FOO BAR                                     |
 | `--cwd`                              | No                         | The working directory to pass to the MCP stdio server process.                                | /tmp                                        |
 | `--pass-environment`                 | No                         | Pass through all environment variables when spawning the server                               | --no-pass-environment                       |
@@ -134,8 +135,8 @@ Arguments
 | `--stateless`                        | No                         | Enable stateless mode for streamable http transports. Default is False                        | --no-stateless                              |
 | `--named-server NAME COMMAND_STRING` | No                         | Defines a named stdio server.                                                                 | --named-server fetch 'uvx mcp-server-fetch' |
 | `--named-server-config FILE_PATH`    | No                         | Path to a JSON file defining named stdio servers.                                             | --named-server-config /path/to/servers.json |
-| `--sse-port` (deprecated)            | No, random available       | The SSE server port to listen on                                                              | 8080                                        |
-| `--sse-host` (deprecated)            | No, `127.0.0.1` by default | The host IP address that the SSE server will listen on                                        | 0.0.0.0                                     |
+| `--sse-port` (deprecated)            | No                         | Ineffective; use `--port` instead.                                                            | —                                           |
+| `--sse-host` (deprecated)            | No                         | Ineffective; use `--host` instead.                                                            | —                                           |
 
 ### 2.2 Example usage
 
@@ -146,16 +147,14 @@ To start the `mcp-proxy` server that listens on port 8080 and connects to the lo
 mcp-proxy uvx mcp-server-fetch
 
 # Start the MCP server behind the proxy with a custom port
-# (deprecated) mcp-proxy --sse-port=8080 uvx mcp-server-fetch
 mcp-proxy --port=8080 uvx mcp-server-fetch
 
 # Start the MCP server behind the proxy with a custom host and port
-# (deprecated) mcp-proxy --sse-host=0.0.0.0 --sse-port=8080 uvx mcp-server-fetch
-mcp-proxy --host=0.0.0.0 --port=8080 uvx mcp-server-fetch
+mcp-proxy --host=0.0.0.0 --port=8080 --allowed-host mcp.example.com:8080 uvx mcp-server-fetch
+# Replace mcp.example.com:8080 with the hostname/IP and port clients send in their Host header.
 
 # Start the MCP server behind the proxy with a custom user agent
 # Note that the `--` separator is used to separate the `mcp-proxy` arguments from the `mcp-server-fetch` arguments
-# (deprecated) mcp-proxy --sse-port=8080 -- uvx mcp-server-fetch --user-agent=YourUserAgent
 mcp-proxy --port=8080 -- uvx mcp-server-fetch --user-agent=YourUserAgent
 
 # Start multiple named MCP servers behind the proxy
@@ -308,12 +307,13 @@ services:
     restart: unless-stopped
     ports:
       - 8096:8096
-    command: "--pass-environment --port=8096 --sse-host 0.0.0.0 uvx mcp-server-fetch"
+    command: "--pass-environment --host=0.0.0.0 --port=8096 --allowed-host mcp.example.com:8096 uvx mcp-server-fetch"
 ```
 
 > [!NOTE]
 > Don't forget to set `--pass-environment` argument, otherwise you'll end up with the error "No interpreter found in
 > managed installations or search path"
+> Replace `mcp.example.com:8096` with the hostname/IP and port clients send in their `Host` header.
 
 ## Command line arguments
 
@@ -329,6 +329,7 @@ usage: mcp-proxy [-h] [--version] [-H KEY VALUE]
                  [--stateless | --no-stateless] [--sse-port SSE_PORT]
                  [--sse-host SSE_HOST]
                  [--allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]]
+                 [--allowed-host HOST]
                  [--expose-header HEADER]
                  [command_or_url] [args ...]
 
@@ -376,12 +377,19 @@ SSE server options:
   --host HOST           Host to expose an SSE server on. Default is 127.0.0.1
   --stateless, --no-stateless
                         Enable stateless mode for streamable http transports. Default is False
-  --sse-port SSE_PORT   (deprecated) Same as --port
-  --sse-host SSE_HOST   (deprecated) Same as --host
+  --sse-port SSE_PORT   (deprecated and ineffective; use --port)
+  --sse-host SSE_HOST   (deprecated and ineffective; use --host)
   --allow-origin ALLOW_ORIGIN [ALLOW_ORIGIN ...]
                         Allowed origins for the SSE server. Can be used multiple times. Default is no CORS allowed.
+  --allowed-host HOST   Additional trusted Host authority. Can be used multiple times.
   --expose-header HEADER
                         Headers to expose via Access-Control-Expose-Headers. Defaults to 'Mcp-Session-Id'. Can be used multiple times.
+
+HTTP server requests are checked against trusted Host authorities before reaching routes. Loopback hostnames and IPs are trusted by default; a non-wildcard `--host` also trusts that bind address. A wildcard bind does not trust arbitrary Host values. Add the public hostname or reverse-proxy Host with `--allowed-host`, repeating the option for each authority (for example, `--allowed-host mcp.example.com --allowed-host mcp.example.com:8443`). A terminal `:*` may be used for an authority that accepts any port.
+
+Raw Uvicorn HTTP access-log lines are disabled because SSE session IDs can appear in request query strings.
+
+Host and browser Origin are separate checks. `--allow-origin '*'` allows browser Origins but does not bypass Host validation. Native clients that omit Origin remain supported. These checks do not authenticate callers; protect publicly reachable deployments with network controls or an authenticated reverse proxy.
 
 Examples:
   mcp-proxy http://localhost:8080/sse

@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Final, Literal
+from urllib.parse import SplitResult, urlsplit
 
 import anyio
 import uvicorn
@@ -15,10 +16,11 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.server import Server as MCPServerSDK  # Renamed to avoid conflict
 from mcp.server.sse import SseServerTransport
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.server.transport_security import TransportSecurityMiddleware, TransportSecuritySettings
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
-from starlette.requests import Request
+from starlette.requests import HTTPConnection, Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.types import Receive, Scope, Send
@@ -28,6 +30,15 @@ from .proxy_server import create_proxy_server
 logger = logging.getLogger(__name__)
 
 DEFAULT_EXPOSE_HEADERS: Final[tuple[str, ...]] = ("mcp-session-id",)
+_LOOPBACK_HOSTS: Final[tuple[str, ...]] = ("localhost", "127.0.0.1", "[::1]")
+# These identify bind values that must not imply trusted Host authorities.
+_WILDCARD_BIND_HOSTS: Final[frozenset[str]] = frozenset({"0.0.0.0", "::"})  # noqa: S104
+_CONTROL_CHAR_START: Final[int] = 32
+_DELETE_CHAR: Final[int] = 127
+_MAX_PORT: Final[int] = 65535
+_HTTP_DEFAULT_PORT: Final[int] = 80
+_HOST_REJECTION_STATUS: Final[int] = 421
+_ORIGIN_REJECTION_STATUS: Final[int] = 403
 
 
 def _default_expose_headers() -> list[str]:
@@ -44,6 +55,233 @@ class MCPServerSettings:
     allow_origins: list[str] | None = None
     expose_headers: list[str] = field(default_factory=_default_expose_headers)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    allowed_hosts: list[str] | None = None
+
+
+def _has_whitespace_or_control(value: str) -> bool:
+    return any(
+        character.isspace()
+        or ord(character) < _CONTROL_CHAR_START
+        or ord(character) == _DELETE_CHAR
+        for character in value
+    )
+
+
+def _valid_wildcard_port(value: str, allow_wildcard_port: bool) -> bool:
+    if "*" not in value:
+        return True
+    return allow_wildcard_port and value.endswith(":*") and value.count("*") == 1
+
+
+def _valid_authority_host(authority: str, hostname: str | None, netloc: str) -> bool:
+    return hostname is not None and netloc == authority
+
+
+def _valid_authority_port(port: int | None) -> bool:
+    return port is None or 1 <= port <= _MAX_PORT
+
+
+def _valid_parsed_authority(authority: str) -> bool:
+    try:
+        parsed = urlsplit(f"//{authority}")
+        port = parsed.port
+    except ValueError:
+        return False
+    return (
+        _valid_authority_host(authority, parsed.hostname, parsed.netloc)
+        and not parsed.path
+        and not parsed.query
+        and not parsed.fragment
+        and _valid_authority_port(port)
+    )
+
+
+def _valid_authority(value: str, *, allow_wildcard_port: bool = False) -> bool:
+    """Accept one host authority, with an optional terminal wildcard port for policy entries."""
+    if not value or value != value.strip() or _has_whitespace_or_control(value):
+        return False
+    wildcard_port = value.endswith(":*")
+    if not _valid_wildcard_port(value, allow_wildcard_port):
+        return False
+    authority = value[:-2] if wildcard_port else value
+    if (
+        not authority
+        or authority.endswith(":")
+        or any(character in authority for character in ",/@?#\\")
+    ):
+        return False
+    return _valid_parsed_authority(authority)
+
+
+def _valid_origin_components(parsed: SplitResult) -> bool:
+    return (
+        parsed.scheme in {"http", "https"}
+        and bool(parsed.netloc)
+        and not parsed.path
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.username is None
+        and parsed.password is None
+        and _valid_authority(parsed.netloc)
+    )
+
+
+def _valid_origin(value: str) -> bool:
+    """Accept a serialized HTTP Origin value or the opaque ``null`` origin."""
+    if value == "null":
+        return True
+    if "?" in value or "#" in value or value != value.strip() or _has_whitespace_or_control(value):
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    return _valid_origin_components(parsed)
+
+
+def _bracket_host(host: str) -> str:
+    """Format raw IPv6 bind addresses for Host and Origin authorities."""
+    return f"[{host}]" if ":" in host else host
+
+
+def _configured_bind_authorities(
+    settings: MCPServerSettings,
+) -> tuple[list[str], list[str]]:
+    """Return Host and Origin entries implied by one concrete bind address."""
+    bind_host = settings.bind_host.strip("[]")
+    if bind_host in _WILDCARD_BIND_HOSTS:
+        return [], []
+
+    formatted_host = _bracket_host(bind_host)
+    bind_port = ":*" if settings.port == 0 else f":{settings.port}"
+    if not _valid_authority(formatted_host) or not _valid_authority(
+        f"{formatted_host}{bind_port}",
+        allow_wildcard_port=True,
+    ):
+        message = f"Invalid server bind host: {settings.bind_host!r}"
+        raise ValueError(message)
+
+    allowed_hosts = [formatted_host, f"{formatted_host}{bind_port}"]
+    allowed_origins = [f"http://{formatted_host}{bind_port}"]
+    if settings.port == _HTTP_DEFAULT_PORT:
+        allowed_origins.append(f"http://{formatted_host}")
+    return allowed_hosts, allowed_origins
+
+
+def _configured_allowed_hosts(hosts: list[str] | None) -> list[str]:
+    allowed_hosts = []
+    for host in hosts or []:
+        if not _valid_authority(host, allow_wildcard_port=True):
+            message = f"Invalid allowed Host authority: {host!r}"
+            raise ValueError(message)
+        allowed_hosts.append(host)
+    return allowed_hosts
+
+
+def _configured_allowed_origins(
+    origins: list[str] | None,
+    allowed_origins: list[str],
+) -> list[str]:
+    for origin in origins or []:
+        if origin not in {"*", "null"} and not _valid_origin(origin):
+            message = f"Invalid allowed Origin: {origin!r}"
+            raise ValueError(message)
+        if origin not in allowed_origins:
+            allowed_origins.append(origin)
+    return allowed_origins
+
+
+def _create_transport_security_settings(
+    settings: MCPServerSettings,
+) -> TransportSecuritySettings:
+    """Build and validate the authority policy before any backend process starts."""
+    if not 0 <= settings.port <= _MAX_PORT:
+        raise ValueError("Server port must be between 0 and 65535")
+
+    allowed_hosts = [authority for host in _LOOPBACK_HOSTS for authority in (host, f"{host}:*")]
+    allowed_origins = [
+        f"{scheme}://{host}{port}"
+        for host in _LOOPBACK_HOSTS
+        for scheme in ("http", "https")
+        for port in ("", ":*")
+    ]
+
+    bind_hosts, bind_origins = _configured_bind_authorities(settings)
+    allowed_hosts.extend(bind_hosts)
+    allowed_origins.extend(bind_origins)
+    allowed_hosts.extend(_configured_allowed_hosts(settings.allowed_hosts))
+    _configured_allowed_origins(settings.allow_origins, allowed_origins)
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+    )
+
+
+def _allows_any_origin(settings: MCPServerSettings) -> bool:
+    return bool(settings.allow_origins and "*" in settings.allow_origins)
+
+
+def _authority_headers(headers: list[tuple[bytes, bytes]]) -> tuple[list[str], list[str]]:
+    hosts = [value.decode("latin-1") for name, value in headers if name.lower() == b"host"]
+    origins = [value.decode("latin-1") for name, value in headers if name.lower() == b"origin"]
+    return hosts, origins
+
+
+def _authority_rejection_status(hosts: list[str], origins: list[str]) -> int | None:
+    if len(hosts) != 1 or not _valid_authority(hosts[0]):
+        return _HOST_REJECTION_STATUS
+    if len(origins) > 1 or (origins and not _valid_origin(origins[0])):
+        return _ORIGIN_REJECTION_STATUS
+    return None
+
+
+class _TransportSecurityAdapter:
+    """Validate all HTTP authority headers before CORS, routing, or request reads."""
+
+    def __init__(
+        self,
+        app: Callable[[Scope, Receive, Send], Awaitable[None]],
+        settings: TransportSecuritySettings,
+        *,
+        allow_any_origin: bool,
+    ) -> None:
+        self.app = app
+        self.validator = TransportSecurityMiddleware(settings)
+        self.allow_any_origin = allow_any_origin
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return None
+
+        headers = scope.get("headers", [])
+        hosts, origins = _authority_headers(headers)
+        rejection_status = _authority_rejection_status(hosts, origins)
+        if rejection_status == _HOST_REJECTION_STATUS:
+            rejection = Response("Invalid Host header", status_code=_HOST_REJECTION_STATUS)
+            return await rejection(scope, receive, send)
+        if rejection_status == _ORIGIN_REJECTION_STATUS:
+            rejection = Response("Invalid Origin header", status_code=_ORIGIN_REJECTION_STATUS)
+            return await rejection(scope, receive, send)
+
+        validation_scope = scope
+        if self.allow_any_origin and origins:
+            validation_scope = dict(scope)
+            validation_scope["headers"] = [
+                (name, value) for name, value in headers if name.lower() != b"origin"
+            ]
+
+        is_post = False
+        response = await self.validator.validate_request(
+            HTTPConnection(validation_scope),
+            is_post=is_post,
+        )
+        if response is not None:
+            return await response(scope, receive, send)
+        await self.app(scope, receive, send)
+        return None
 
 
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
@@ -224,8 +462,8 @@ async def run_mcp_server(
     named_server_params: dict[str, StdioServerParameters] | None = None,
 ) -> None:
     """Run stdio client(s) and expose an MCP server with multiple possible backends."""
-    if named_server_params is None:
-        named_server_params = {}
+    security_settings = _create_transport_security_settings(mcp_settings)
+    named_server_params = {} if named_server_params is None else named_server_params
 
     stdio_exit = _StdioExitWatch()
     all_routes: list[BaseRoute] = [
@@ -312,11 +550,18 @@ async def run_mcp_server(
 
         starlette_app.router.redirect_slashes = False
 
-        config = uvicorn.Config(
+        server_app = _TransportSecurityAdapter(
             starlette_app,
+            security_settings,
+            allow_any_origin=_allows_any_origin(mcp_settings),
+        )
+
+        config = uvicorn.Config(
+            server_app,
             host=mcp_settings.bind_host,
             port=mcp_settings.port,
             log_level=mcp_settings.log_level.lower(),
+            access_log=False,
         )
         http_server = uvicorn.Server(config)
         stdio_exit.attach(http_server)

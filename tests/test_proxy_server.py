@@ -14,6 +14,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from unittest.mock import AsyncMock
 
+import anyio
 import pytest
 from mcp import types
 from mcp.client.session import ClientSession
@@ -498,19 +499,47 @@ async def test_unsubscribe_resource(
         unsubscribe_callback.reset_mock()
 
 
+@pytest.mark.parametrize(
+    ("progress_token", "total", "message"),
+    [(1, 1, "Processing item 1"), ("request-token", None, ""), (0, None, None)],
+)
 async def test_send_progress_notification(
     session_generator: SessionContextManager,
     server_can_send_progress_notification: Server[object],
+    progress_token: str | int,
+    total: float | None,
+    message: str | None,
 ) -> None:
-    """Test send_progress_notification."""
-    async with session_generator(server_can_send_progress_notification) as session:
-        await session.initialize()
+    """Preserve client progress notification fields through the proxy."""
+    received: list[types.ProgressNotificationParams] = []
+    notification_received = anyio.Event()
 
+    async def record_progress(notification: types.ProgressNotification) -> None:
+        received.append(notification.params)
+        notification_received.set()
+
+    server_can_send_progress_notification.notification_handlers[types.ProgressNotification] = (
+        record_progress
+    )
+
+    async with session_generator(server_can_send_progress_notification) as session:
         await session.send_progress_notification(
-            progress_token=1,
+            progress_token=progress_token,
             progress=0.5,
-            total=1,
+            total=total,
+            message=message,
         )
+        with anyio.fail_after(5):
+            await notification_received.wait()
+
+        assert received == [
+            types.ProgressNotificationParams(
+                progressToken=progress_token,
+                progress=0.5,
+                total=total,
+                message=message,
+            ),
+        ]
 
 
 @pytest.mark.parametrize("complete_callback", [AsyncMock()])
