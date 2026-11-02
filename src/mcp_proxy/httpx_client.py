@@ -17,6 +17,8 @@ def custom_httpx_client(
     timeout: httpx.Timeout | None = None,
     auth: httpx.Auth | None = None,
     verify_ssl: bool | str | None = None,
+    *,
+    client_class: type[httpx.AsyncClient] | None = None,
 ) -> httpx.AsyncClient:
     """Create a standardized httpx AsyncClient with MCP defaults and logging.
 
@@ -29,6 +31,7 @@ def custom_httpx_client(
         auth: Optional authentication handler.
         verify_ssl: Control SSL verification. Use False to disable
             or a path to a certificate bundle.
+        client_class: Optional AsyncClient subclass for specialized transports.
 
     Returns:
         Configured httpx.AsyncClient instance with MCP defaults and logging.
@@ -99,4 +102,4 @@ def custom_httpx_client(
         "response": [log_response],
     }
 
-    return httpx.AsyncClient(**kwargs)
+    return (client_class or httpx.AsyncClient)(**kwargs)

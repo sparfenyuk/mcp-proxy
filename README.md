@@ -53,6 +53,8 @@ graph LR
 
 This mode requires providing the URL of the MCP Server's SSE endpoint as the program’s first argument. If the server uses Streamable HTTP transport, make sure to enforce it on the `mcp-proxy` side by passing `--transport=streamablehttp`.
 
+When the proxy is a **Streamable HTTP client**, it bounds the final MCP session-termination `DELETE` request, including reading its response body, to five seconds. After cancellation or timeout, closing a received response gets a shielded, cooperative grace of up to one second; cleanup code that ignores cancellation can take longer. Graceful CLI teardown after SIGINT requires Python 3.11+; on Python 3.10, SIGINT may interrupt the event loop before the final `DELETE` is sent ([asyncio runner documentation](https://docs.python.org/3.11/library/asyncio-runner.html#handling-keyboard-interruption)). This limit applies only to that termination operation; normal `GET` streams and `POST` tool calls retain their usual HTTP timeouts. It is specific to reverse-client mode and does not change the stateful/stateless behavior of proxied HTTP servers.
+
 Arguments
 
 | Name             | Required | Description                                                                                                       | Example                                       |

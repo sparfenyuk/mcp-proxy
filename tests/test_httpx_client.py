@@ -23,6 +23,58 @@ from mcp_proxy.httpx_client import custom_httpx_client
 
 
 @pytest.mark.asyncio
+async def test_custom_httpx_client_selects_class_and_keeps_shared_options() -> None:
+    """The optional client class uses the same TLS, auth, header and hook config."""
+    async with custom_httpx_client() as default_client:
+        assert type(default_client) is httpx.AsyncClient
+
+    supplied: dict[str, Any] = {}
+
+    class SelectedClient(httpx.AsyncClient):
+        def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401
+            supplied.update(kwargs)
+            super().__init__(**kwargs)
+
+    timeout = httpx.Timeout(2.5)
+    async with custom_httpx_client(
+        headers={"X-Test": "header"},
+        timeout=timeout,
+        auth=None,
+        verify_ssl=False,
+        client_class=SelectedClient,
+    ) as selected_client:
+        assert type(selected_client) is SelectedClient
+        assert selected_client.headers["X-Test"] == "header"
+        assert selected_client.follow_redirects is False
+
+    assert supplied["timeout"] is timeout
+    assert supplied["auth"] is None
+    assert supplied["verify"] is False
+    assert supplied["follow_redirects"] is False
+    assert set(supplied["event_hooks"]) == {"request", "response"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("verify_ssl", "expected"), [("true", True), ("false", False)])
+async def test_selected_httpx_client_keeps_string_ssl_normalization(
+    verify_ssl: str,
+    expected: bool,
+) -> None:
+    """The client-class selector preserves normalized SSL string values."""
+    supplied: dict[str, Any] = {}
+
+    class SelectedClient(httpx.AsyncClient):
+        def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401
+            supplied.update(kwargs)
+            super().__init__(**kwargs)
+
+    async with custom_httpx_client(verify_ssl=verify_ssl, client_class=SelectedClient):
+        pass
+
+    assert supplied["verify"] is expected
+
+
+@pytest.mark.asyncio
 async def test_custom_httpx_client_does_not_follow_redirects(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
