@@ -3,6 +3,7 @@
 
 import asyncio
 import contextlib
+import logging
 import sys
 import typing as t
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
@@ -14,19 +15,44 @@ from mcp import types
 from mcp.client.session import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.stdio import StdioServerParameters
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client, streamablehttp_client
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.cors import CORSMiddleware
 
+from mcp_proxy.__main__ import _setup_logging
+from mcp_proxy.httpx_client import custom_httpx_client
 from mcp_proxy.mcp_server import (
     DEFAULT_EXPOSE_HEADERS,
     MCPServerSettings,
     create_single_instance_routes,
     run_mcp_server,
 )
+
+_LOGGING_STDIO_SERVER = """
+import asyncio
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import TextContent, Tool
+
+server = Server("logging-test")
+
+@server.list_tools()
+async def list_tools():
+    return [Tool(name="echo", description="Echo", inputSchema={"type": "object"})]
+
+@server.call_tool()
+async def call_tool(name, arguments):
+    return [TextContent(type="text", text=str(arguments["message"]))]
+
+async def main():
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, server.create_initialization_options())
+
+asyncio.run(main())
+"""
 
 
 def create_starlette_app(
@@ -180,6 +206,123 @@ async def test_http_transport(path_suffix: str) -> None:
                 assert tool_result.content[0].text == f"Echo: test_{i}"
 
 
+@pytest.mark.parametrize(("level", "debug"), [("INFO", False), ("DEBUG", True)])
+async def test_run_mcp_server_keeps_transport_secrets_out_of_logs(
+    level: str,
+    debug: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Real default and named transports work without logging their credentials or payloads."""
+    root = logging.getLogger()
+    root_state = (root.level, root.handlers[:])
+    logger_names = (
+        "httpx",
+        "httpcore",
+        "mcp.client.sse",
+        "mcp.client.streamable_http",
+        "mcp.server.lowlevel.server",
+        "mcp.server.streamable_http_manager",
+        "mcp.server.sse",
+        "mcp.server.streamable_http",
+        "sse_starlette.sse",
+        "uvicorn",
+        "uvicorn.error",
+        "uvicorn.access",
+        "uvicorn.asgi",
+    )
+    logger_states = {
+        name: (logger.level, logger.handlers[:], logger.propagate, logger.disabled)
+        for name in logger_names
+        if (logger := logging.getLogger(name))
+    }
+    session_ids: list[str] = []
+    body_marker = "mcp-transport-body-secret"
+    access_query_marker = "access-query-secret"
+
+    async def exercise_transports(base_url: str) -> None:
+        async with custom_httpx_client() as client:
+            response = await client.get(f"{base_url}/healthz?{access_query_marker}")
+        assert response.status_code == 204
+
+        for prefix in ("", "/servers/named"):
+            async with (
+                custom_httpx_client() as http_client,
+                streamable_http_client(
+                    f"{base_url}{prefix}/mcp/",
+                    http_client=http_client,
+                ) as streams,
+                ClientSession(streams[0], streams[1]) as session,
+            ):
+                await session.initialize()
+                session_id = streams[2]()
+                assert session_id is not None
+                session_ids.append(session_id)
+                result = await session.call_tool("echo", {"message": body_marker})
+                assert len(result.content) == 1
+                assert isinstance(result.content[0], types.TextContent)
+                assert result.content[0].text == body_marker
+
+            async with (
+                sse_client(
+                    url=f"{base_url}{prefix}/sse",
+                    httpx_client_factory=custom_httpx_client,
+                    on_session_created=session_ids.append,
+                ) as streams,
+                ClientSession(*streams) as session,
+            ):
+                await session.initialize()
+                result = await session.call_tool("echo", {"message": body_marker})
+                assert len(result.content) == 1
+                assert isinstance(result.content[0], types.TextContent)
+                assert result.content[0].text == body_marker
+
+    class CapturingBackgroundServer(BackgroundServer):
+        async def serve(self) -> None:
+            task = asyncio.create_task(super().serve())
+            try:
+                with anyio.fail_after(10):
+                    while not self.started:  # noqa: ASYNC110
+                        await anyio.sleep(1e-3)
+                with anyio.fail_after(15):
+                    await exercise_transports(self.url)
+            finally:
+                self.should_exit = self.force_exit = True
+                await task
+
+    try:
+        root.handlers.clear()
+        root.setLevel(logging.WARNING)
+        _setup_logging(level=level, debug=debug)
+        monkeypatch.setattr("mcp_proxy.mcp_server.uvicorn.Server", CapturingBackgroundServer)
+        params = StdioServerParameters(command=sys.executable, args=["-c", _LOGGING_STDIO_SERVER])
+        await run_mcp_server(
+            MCPServerSettings(bind_host="127.0.0.1", port=0, log_level=level),
+            params,
+            {"named": params},
+        )
+        captured = capsys.readouterr()
+        output = captured.out + captured.err
+    finally:
+        root.handlers[:] = root_state[1]
+        root.setLevel(root_state[0])
+        for name, state in logger_states.items():
+            logger = logging.getLogger(name)
+            logger.setLevel(state[0])
+            logger.handlers[:] = state[1]
+            logger.propagate = state[2]
+            logger.disabled = state[3]
+
+    assert len(session_ids) == 4
+    leaked = [
+        secret for secret in (*session_ids, body_marker, access_query_marker) if secret in output
+    ]
+    leaked_lines = [
+        line for line in output.splitlines() if any(secret in line for secret in leaked)
+    ]
+    assert not leaked, f"Sensitive markers appeared in server logs: {leaked}\n{leaked_lines}"
+
+
 async def test_stateless_http_transport() -> None:
     """Test stateless HTTP transport functionality."""
     server = make_background_server(debug=True, stateless=True)
@@ -214,6 +357,23 @@ def mock_settings() -> MCPServerSettings:
         allow_origins=["*"],
         log_level="INFO",
     )
+
+
+def test_mcp_server_settings_preserves_existing_positional_field_order() -> None:
+    """The new Host option does not shift prior positional settings fields."""
+    stateless = False
+    settings = MCPServerSettings(
+        "127.0.0.1",
+        8080,
+        stateless,
+        None,
+        ["X-Example"],
+        "DEBUG",
+    )
+
+    assert settings.expose_headers == ["X-Example"]
+    assert settings.log_level == "DEBUG"
+    assert settings.allowed_hosts is None
 
 
 @pytest.fixture
@@ -591,6 +751,7 @@ async def test_run_mcp_server_uvicorn_config(
         assert call_args.kwargs["host"] == mock_settings.bind_host
         assert call_args.kwargs["port"] == mock_settings.port
         assert call_args.kwargs["log_level"] == mock_settings.log_level.lower()
+        assert call_args.kwargs["access_log"] is False
 
 
 async def test_run_mcp_server_global_status_updates(

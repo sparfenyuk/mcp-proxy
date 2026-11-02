@@ -123,6 +123,24 @@ def test_create_mcp_settings_custom_expose_headers(parser: ArgumentParser) -> No
     assert settings.expose_headers == ["Custom-Header", "Another-Header"]
 
 
+def test_allowed_host_argument_accumulates_trusted_authorities(parser: ArgumentParser) -> None:
+    """Repeated --allowed-host flags are preserved for server settings."""
+    args = parser.parse_args(
+        [
+            "--allowed-host",
+            "mcp.example.com",
+            "--allowed-host",
+            "mcp.example.com:8443",
+            "uvx",
+            "mcp-server-fetch",
+        ],
+    )
+    assert _create_mcp_settings(args).allowed_hosts == [
+        "mcp.example.com",
+        "mcp.example.com:8443",
+    ]
+
+
 @patch("mcp_proxy.httpx_client.httpx.AsyncClient")
 def test_custom_httpx_client_disable_ssl(mock_async_client: Mock) -> None:
     """custom_httpx_client passes verify=False to httpx when disabled."""

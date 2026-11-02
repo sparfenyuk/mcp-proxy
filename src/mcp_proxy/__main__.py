@@ -282,6 +282,13 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         ),
     )
     mcp_server_group.add_argument(
+        "--allowed-host",
+        action="append",
+        default=None,
+        metavar="HOST",
+        help="Additional trusted Host authority. Can be used multiple times.",
+    )
+    mcp_server_group.add_argument(
         "--expose-header",
         action="append",
         dest="expose_headers",
@@ -300,6 +307,18 @@ def _setup_logging(*, level: str, debug: bool) -> logging.Logger:
         level=logging.DEBUG if debug else level,
         format="[%(levelname)1.1s %(asctime)s.%(msecs).03d %(name)s] %(message)s",
     )
+    for logger_name in (
+        "httpx",
+        "httpcore",
+        "mcp.client.sse",
+        "mcp.client.streamable_http",
+        "mcp.server.lowlevel.server",
+        "mcp.server.streamable_http_manager",
+        "mcp.server.sse",
+        "mcp.server.streamable_http",
+        "sse_starlette.sse",
+    ):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
     return logging.getLogger(__name__)
 
 
@@ -468,6 +487,7 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         port=args_parsed.port if args_parsed.port is not None else args_parsed.sse_port,
         stateless=args_parsed.stateless,
         allow_origins=args_parsed.allow_origin if len(args_parsed.allow_origin) > 0 else None,
+        allowed_hosts=args_parsed.allowed_host,
         expose_headers=expose_headers,
         log_level="DEBUG" if args_parsed.debug else args_parsed.log_level,
     )
