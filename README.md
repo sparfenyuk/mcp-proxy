@@ -95,6 +95,16 @@ For Claude Desktop, the configuration entry can look like this:
 }
 ```
 
+Closing the client's stdin disconnects the remote session and cancels connection setup, initialization, and active
+requests. Queued input is abandoned. Each input frame is limited to 4 MiB of UTF-8 wire payload bytes, excluding
+CR/LF delimiters. At most 4 MiB and 128 frames may be admitted but not yet consumed; empty and malformed frames count
+toward the frame limit. Exceeding either limit exits with an error instead of silently dropping input. These are
+admission limits, not an exact memory limit, because decoded text and protocol objects use additional memory.
+
+The client must read or close stdout. A full, unread stdout pipe can prevent process exit. A cancelled blocking stdin
+read may leave one daemon thread and its private descriptor until the read returns or the process exits. The helper
+supports one active CLI lifespan per process.
+
 ## 2. SSE to stdio
 
 Run a proxy server exposing a SSE server that connects to a local stdio server.
