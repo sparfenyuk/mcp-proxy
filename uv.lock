@@ -641,7 +641,7 @@ requires-dist = [
     { name = "certifi", specifier = ">=2026.10.19" },
     { name = "cryptography", specifier = ">=50.0.0" },
     { name = "httpx-auth", specifier = ">=0.23.1" },
-    { name = "mcp", specifier = ">=1.27.1,<2" },
+    { name = "mcp", specifier = ">=1.30.0,<2" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pyjwt", specifier = ">=2.15.0" },
     { name = "python-multipart", specifier = ">=0.0.31" },
