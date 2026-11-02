@@ -4,11 +4,15 @@
 import asyncio
 import contextlib
 import logging
+import signal
+import socket
 import sys
 import typing as t
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, create_autospec, patch
 
 import anyio
+import httpx
 import pytest
 import uvicorn
 from mcp import types
@@ -53,6 +57,106 @@ async def main():
 
 asyncio.run(main())
 """
+
+
+_BLOCKING_STDIO_SERVER = """
+import asyncio
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import Tool
+
+entry_port = __ENTRY_PORT__
+server = Server("blocking-test")
+
+@server.list_tools()
+async def list_tools():
+    return [Tool(name="block", description="Wait forever", inputSchema={"type": "object"})]
+
+@server.call_tool()
+async def call_tool(name, arguments):
+    _reader, writer = await asyncio.open_connection("127.0.0.1", entry_port)
+    writer.close()
+    await writer.wait_closed()
+    await asyncio.Event().wait()
+
+async def main():
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, server.create_initialization_options())
+
+asyncio.run(main())
+"""
+
+
+def _backend_entry_handler(
+    entry_event: asyncio.Event,
+) -> t.Callable[[asyncio.StreamReader, asyncio.StreamWriter], t.Awaitable[None]]:
+    async def handle_entry(_reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        entry_event.set()
+        writer.close()
+        await writer.wait_closed()
+
+    return handle_entry
+
+
+async def _wait_for_proxy_ready(base_url: str) -> None:
+    async with custom_httpx_client(timeout=httpx.Timeout(1, connect=0.1)) as client:
+        deadline = asyncio.get_running_loop().time() + 10
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                response = await client.get(f"{base_url}/healthz")
+            except httpx.HTTPError:
+                await asyncio.sleep(0.05)
+                continue
+            if response.status_code == 204:
+                return
+            await asyncio.sleep(0.05)
+    raise AssertionError("proxy did not become ready")
+
+
+async def _send_sigterm_and_wait(process: asyncio.subprocess.Process) -> float:
+    started = asyncio.get_running_loop().time()
+    process.send_signal(signal.SIGTERM)
+    await asyncio.wait_for(process.wait(), timeout=12)
+    return asyncio.get_running_loop().time() - started
+
+
+async def _initialize_streamable_http(client: httpx.AsyncClient, url: str) -> dict[str, str]:
+    initialize = types.InitializeRequest(
+        params=types.InitializeRequestParams(
+            protocolVersion=types.LATEST_PROTOCOL_VERSION,
+            capabilities=types.ClientCapabilities(),
+            clientInfo=types.Implementation(name="shutdown-test", version="1"),
+        ),
+    )
+    headers = {"Accept": "application/json, text/event-stream"}
+    response = await client.post(
+        url,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            **initialize.model_dump(by_alias=True, mode="json", exclude_none=True),
+        },
+        headers=headers,
+    )
+    response.raise_for_status()
+    headers.update(
+        {
+            "Mcp-Session-Id": response.headers["mcp-session-id"],
+            "MCP-Protocol-Version": str(response.json()["result"]["protocolVersion"]),
+        },
+    )
+
+    notification = types.InitializedNotification()
+    response = await client.post(
+        url,
+        json={
+            "jsonrpc": "2.0",
+            **notification.model_dump(by_alias=True, mode="json", exclude_none=True),
+        },
+        headers=headers,
+    )
+    assert response.status_code == 202
+    return headers
 
 
 def create_starlette_app(
@@ -752,6 +856,9 @@ async def test_run_mcp_server_uvicorn_config(
         assert call_args.kwargs["port"] == mock_settings.port
         assert call_args.kwargs["log_level"] == mock_settings.log_level.lower()
         assert call_args.kwargs["access_log"] is False
+        # SIGTERM must not hang on in-flight connections: uvicorn's default
+        # graceful-shutdown timeout is unbounded (None). See #281.
+        assert call_args.kwargs["timeout_graceful_shutdown"] == 5
 
 
 async def test_run_mcp_server_global_status_updates(
@@ -934,3 +1041,86 @@ async def test_run_mcp_server_exits_non_zero_when_stdio_server_exits() -> None:
     with anyio.fail_after(15), pytest.raises(SystemExit) as exc_info:
         await run_mcp_server(settings, params, {})
     assert exc_info.value.code == 1
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM is not available on Windows")
+async def test_sigterm_bounds_shutdown_with_pending_streamable_call(tmp_path: Path) -> None:
+    """An active StreamableHTTP tool call cannot keep the real CLI proxy alive."""
+    entry_event = asyncio.Event()
+    async with await asyncio.start_server(
+        _backend_entry_handler(entry_event), "127.0.0.1", 0
+    ) as entry_server:
+        entry_port = entry_server.sockets[0].getsockname()[1]
+        backend_script = tmp_path / "stdio_server.py"
+        backend_script.write_text(_BLOCKING_STDIO_SERVER.replace("__ENTRY_PORT__", str(entry_port)))
+
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1", 0))
+            port = sock.getsockname()[1]
+
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "mcp_proxy",
+            sys.executable,
+            str(backend_script),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        call_task: asyncio.Task[t.Any] | None = None
+        timed_out = False
+        elapsed: float | None = None
+
+        try:
+            base_url = f"http://127.0.0.1:{port}"
+            await _wait_for_proxy_ready(base_url)
+            async with custom_httpx_client(timeout=httpx.Timeout(None)) as client:
+                headers = await _initialize_streamable_http(client, f"{base_url}/mcp")
+                call = types.CallToolRequest(
+                    params=types.CallToolRequestParams(name="block", arguments={}),
+                )
+                call_task = asyncio.create_task(
+                    client.post(
+                        f"{base_url}/mcp",
+                        json={
+                            "jsonrpc": "2.0",
+                            "id": 2,
+                            **call.model_dump(by_alias=True, mode="json", exclude_none=True),
+                        },
+                        headers=headers,
+                    ),
+                )
+                try:
+                    await asyncio.wait_for(entry_event.wait(), timeout=10)
+                    assert not call_task.done(), "tools/call completed before SIGTERM"
+                    try:
+                        elapsed = await _send_sigterm_and_wait(process)
+                    except TimeoutError:
+                        timed_out = True
+                finally:
+                    if process.returncode is None:
+                        with contextlib.suppress(ProcessLookupError):
+                            process.kill()
+                        await process.wait()
+                    if not call_task.done():
+                        call_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await call_task
+        finally:
+            if process.returncode is None:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+            output, _ = await process.communicate()
+
+        if timed_out:
+            pytest.fail(
+                "proxy remained alive beyond 12 seconds after SIGTERM\n"
+                f"{output.decode(errors='replace')}"
+            )
+        assert elapsed is not None
+        assert elapsed >= 4
+        assert b"timeout graceful shutdown exceeded" in output.lower()
