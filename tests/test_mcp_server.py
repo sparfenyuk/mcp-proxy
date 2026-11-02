@@ -4,6 +4,7 @@
 import asyncio
 import contextlib
 import logging
+import os
 import signal
 import socket
 import sys
@@ -158,6 +159,105 @@ async def _initialize_streamable_http(client: httpx.AsyncClient, url: str) -> di
     )
     assert response.status_code == 202
     return headers
+
+
+def _initialization_timeout_stdio_server_script(
+    tmp_path: Path,
+    *,
+    initialize_delay: float,
+    tool_call_delay: float,
+) -> str:
+    return f"""
+import json, os, pathlib, sys, time
+initialize_received = pathlib.Path({str(tmp_path / "initialize-received")!r})
+initialized = pathlib.Path({str(tmp_path / "initialized")!r})
+tool_call_entered = pathlib.Path({str(tmp_path / "tool-call-entered")!r})
+tool_call_finished = pathlib.Path({str(tmp_path / "tool-call-finished")!r})
+child_pid = pathlib.Path({str(tmp_path / "child-pid")!r})
+child_stopped = pathlib.Path({str(tmp_path / "child-stopped")!r})
+initialize_delay = {initialize_delay!r}
+tool_call_delay = {tool_call_delay!r}
+child_pid.write_text(str(os.getpid()))
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request.get("method")
+    if method == "initialize":
+        initialize_received.touch()
+        time.sleep(initialize_delay)
+        result = dict(
+            protocolVersion=request["params"]["protocolVersion"],
+            capabilities=dict(tools=dict()),
+            serverInfo=dict(name="timeout-test", version="1"),
+        )
+    elif method == "notifications/initialized":
+        initialized.touch()
+        continue
+    elif method == "tools/list":
+        result = dict(
+            tools=[
+                dict(
+                    name="delay",
+                    description="Wait longer than the initialization budget",
+                    inputSchema=dict(type="object", properties=dict()),
+                ),
+            ],
+        )
+    elif method == "tools/call":
+        tool_call_entered.touch()
+        time.sleep(tool_call_delay)
+        tool_call_finished.touch()
+        result = dict(content=[dict(type="text", text="finished")], isError=False)
+    else:
+        result = dict()
+    if "id" in request:
+        print(json.dumps(dict(jsonrpc="2.0", id=request["id"], result=result)), flush=True)
+child_stopped.touch()
+"""
+
+
+async def _start_stdio_proxy(
+    backend_script: Path,
+    port: int,
+    *,
+    initialization_timeout: float | None = None,
+) -> asyncio.subprocess.Process:
+    command = [
+        sys.executable,
+        "-m",
+        "mcp_proxy",
+        sys.executable,
+        str(backend_script),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+    if initialization_timeout is not None:
+        command.extend(["--initialization-timeout", str(initialization_timeout)])
+    return await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+
+
+async def _stop_stdio_proxy(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is None:
+        with contextlib.suppress(ProcessLookupError):
+            process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=10)
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+            await process.wait()
+    await process.communicate()
+
+
+def _assert_pid_reaped(pid_file: Path) -> None:
+    if sys.platform != "win32":
+        with pytest.raises(ProcessLookupError):
+            os.kill(int(pid_file.read_text()), 0)
 
 
 def create_starlette_app(
@@ -569,8 +669,9 @@ def mock_settings() -> MCPServerSettings:
 
 
 def test_mcp_server_settings_preserves_existing_positional_field_order() -> None:
-    """The new Host option does not shift prior positional settings fields."""
+    """The initialization timeout follows every pre-existing positional field."""
     stateless = False
+    allowed_hosts = ["proxy.example.com"]
     settings = MCPServerSettings(
         "127.0.0.1",
         8080,
@@ -578,11 +679,14 @@ def test_mcp_server_settings_preserves_existing_positional_field_order() -> None
         None,
         ["X-Example"],
         "DEBUG",
+        allowed_hosts,
+        2.5,
     )
 
     assert settings.expose_headers == ["X-Example"]
     assert settings.log_level == "DEBUG"
-    assert settings.allowed_hosts is None
+    assert settings.allowed_hosts == allowed_hosts
+    assert settings.initialization_timeout == 2.5
 
 
 @pytest.fixture
@@ -640,6 +744,33 @@ async def test_run_mcp_server_no_servers_configured(mock_settings: MCPServerSett
     with patch("mcp_proxy.mcp_server.logger") as mock_logger:
         await run_mcp_server(mock_settings, None, {})
         mock_logger.error.assert_called_once_with("No servers configured to run.")
+
+
+@pytest.mark.parametrize(
+    "configured_timeout",
+    [0, -1, float("nan"), float("inf"), float("-inf")],
+)
+async def test_run_mcp_server_rejects_invalid_initialization_timeout_before_child_start(
+    mock_stdio_params: StdioServerParameters,
+    configured_timeout: float,
+) -> None:
+    """Invalid programmatic deadlines fail before crossing the stdio spawn boundary."""
+    settings = MCPServerSettings(
+        bind_host="127.0.0.1",
+        port=0,
+        initialization_timeout=configured_timeout,
+    )
+
+    with (
+        patch(
+            "mcp_proxy.mcp_server.stdio_client",
+            side_effect=AssertionError("stdio child creation reached"),
+        ) as mock_stdio_client,
+        pytest.raises(ValueError, match="initialization_timeout"),
+    ):
+        await run_mcp_server(settings, mock_stdio_params)
+
+    mock_stdio_client.assert_not_called()
 
 
 async def test_run_mcp_server_with_default_server(
@@ -1138,13 +1269,16 @@ for line in sys.stdin:
 """
 
 
-async def test_run_mcp_server_exits_non_zero_when_stdio_server_exits() -> None:
+@pytest.mark.parametrize("named", [False, True])
+async def test_run_mcp_server_exits_non_zero_when_stdio_server_exits(*, named: bool) -> None:
     """When the stdio server exits, the proxy must exit non-zero instead of serving errors."""
-    settings = MCPServerSettings(bind_host="127.0.0.1", port=0)
+    settings = MCPServerSettings(bind_host="127.0.0.1", port=0, initialization_timeout=0.5)
     params = StdioServerParameters(command=sys.executable, args=["-c", _EXITING_STDIO_SERVER])
 
     with anyio.fail_after(15), pytest.raises(SystemExit) as exc_info:
-        await run_mcp_server(settings, params, {})
+        await run_mcp_server(
+            settings, None if named else params, {"healthy": params} if named else {}
+        )
     assert exc_info.value.code == 1
 
 
@@ -1229,3 +1363,201 @@ async def test_sigterm_bounds_shutdown_with_pending_streamable_call(tmp_path: Pa
         assert elapsed is not None
         assert elapsed >= 4
         assert b"timeout graceful shutdown exceeded" in output.lower()
+
+
+@pytest.mark.parametrize("named", [False, True])
+async def test_stdio_initialization_timeout_reaps_child(tmp_path: Path, *, named: bool) -> None:
+    """An unresponsive child times out and stack cleanup reaps all started children."""
+
+    def child_script(
+        pid_file: Path,
+        received: Path,
+        initialized: Path,
+        stopped: Path,
+        *,
+        respond_to_initialize: bool,
+    ) -> str:
+        return f"""
+import json, os, pathlib, sys
+pid_file = pathlib.Path({str(pid_file)!r})
+received = pathlib.Path({str(received)!r})
+initialized = pathlib.Path({str(initialized)!r})
+stopped = pathlib.Path({str(stopped)!r})
+pid_file.write_text(str(os.getpid()))
+for line in sys.stdin:
+    request = json.loads(line)
+    if request.get("method") == "initialize":
+        received.write_text(line)
+        if {respond_to_initialize!r}:
+            result = dict(
+                protocolVersion=request["params"]["protocolVersion"],
+                capabilities={{}},
+                serverInfo=dict(name="test", version="1"),
+            )
+            print(json.dumps(dict(jsonrpc="2.0", id=request["id"], result=result)), flush=True)
+    elif request.get("method") == "notifications/initialized":
+        initialized.touch()
+stopped.touch()
+"""
+
+    silent_pid = tmp_path / "silent-pid"
+    silent_received = tmp_path / "silent-initialize-received"
+    silent_initialized = tmp_path / "silent-initialized"
+    silent_stopped = tmp_path / "silent-stopped"
+    silent = StdioServerParameters(
+        command=sys.executable,
+        args=[
+            "-c",
+            child_script(
+                silent_pid,
+                silent_received,
+                silent_initialized,
+                silent_stopped,
+                respond_to_initialize=False,
+            ),
+        ],
+    )
+    settings = MCPServerSettings(bind_host="127.0.0.1", port=0, initialization_timeout=0.5)
+    default_pid: Path | None = None
+    default_initialized: Path | None = None
+    default_stopped: Path | None = None
+    default_params: StdioServerParameters | None = None
+    named_params = {"silent": silent} if named else {}
+    if named:
+        default_pid = tmp_path / "default-pid"
+        default_received = tmp_path / "default-initialize-received"
+        default_initialized = tmp_path / "default-initialized"
+        default_stopped = tmp_path / "default-stopped"
+        default_params = StdioServerParameters(
+            command=sys.executable,
+            args=[
+                "-c",
+                child_script(
+                    default_pid,
+                    default_received,
+                    default_initialized,
+                    default_stopped,
+                    respond_to_initialize=True,
+                ),
+            ],
+        )
+
+    pid_files = [silent_pid]
+    if default_pid is not None:
+        pid_files.append(default_pid)
+    server_task = asyncio.create_task(
+        run_mcp_server(settings, silent if not named else default_params, named_params),
+    )
+    try:
+        done, _ = await asyncio.wait({server_task}, timeout=3)
+        assert server_task in done, "startup did not hit the configured initialization deadline"
+        with pytest.RaisesGroup(TimeoutError, flatten_subgroups=True):
+            await server_task
+    finally:
+        if not server_task.done():
+            server_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+                await asyncio.wait_for(asyncio.shield(server_task), timeout=5)
+            if not server_task.done():
+                for pid_file in pid_files:
+                    if pid_file.exists():
+                        with contextlib.suppress(ProcessLookupError):
+                            os.kill(int(pid_file.read_text()), signal.SIGTERM)
+                with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+                    await asyncio.wait_for(asyncio.shield(server_task), timeout=5)
+        assert silent_received.exists(), "silent child did not receive initialize"
+        assert silent_stopped.exists(), "silent child did not exit after stack cleanup"
+        _assert_pid_reaped(silent_pid)
+        if named:
+            assert default_initialized is not None
+            assert default_initialized.exists()
+            assert default_stopped is not None
+            assert default_stopped.exists()
+            assert default_pid is not None
+            _assert_pid_reaped(default_pid)
+
+
+async def test_omitted_initialization_timeout_allows_delayed_initialize(tmp_path: Path) -> None:
+    """Omitting the budget permits initialization beyond the opted-in duration."""
+    nominal_timeout = 0.5
+    initialize_received = tmp_path / "initialize-received"
+    initialized = tmp_path / "initialized"
+    child_pid = tmp_path / "child-pid"
+    child_stopped = tmp_path / "child-stopped"
+    backend_script = tmp_path / "stdio_server.py"
+    backend_script.write_text(
+        _initialization_timeout_stdio_server_script(
+            tmp_path,
+            initialize_delay=nominal_timeout + 0.25,
+            tool_call_delay=0,
+        ),
+    )
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    process = await _start_stdio_proxy(backend_script, port)
+    try:
+        await _wait_for_proxy_ready(f"http://127.0.0.1:{port}")
+    finally:
+        await _stop_stdio_proxy(process)
+
+    assert initialize_received.exists()
+    assert initialized.exists()
+    assert child_stopped.exists()
+    _assert_pid_reaped(child_pid)
+
+
+async def test_initialization_timeout_does_not_limit_later_tool_call(tmp_path: Path) -> None:
+    """A real tool call may outlast the configured initialization budget."""
+    initialization_timeout = 0.5
+    initialize_received = tmp_path / "initialize-received"
+    initialized = tmp_path / "initialized"
+    tool_call_entered = tmp_path / "tool-call-entered"
+    tool_call_finished = tmp_path / "tool-call-finished"
+    child_pid = tmp_path / "child-pid"
+    child_stopped = tmp_path / "child-stopped"
+    backend_script = tmp_path / "stdio_server.py"
+    backend_script.write_text(
+        _initialization_timeout_stdio_server_script(
+            tmp_path,
+            initialize_delay=0,
+            tool_call_delay=initialization_timeout + 0.25,
+        ),
+    )
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    base_url = f"http://127.0.0.1:{port}"
+    process = await _start_stdio_proxy(
+        backend_script,
+        port,
+        initialization_timeout=initialization_timeout,
+    )
+    try:
+        await _wait_for_proxy_ready(base_url)
+        async with custom_httpx_client(timeout=httpx.Timeout(10)) as client:
+            headers = await _initialize_streamable_http(client, f"{base_url}/mcp")
+            call = types.CallToolRequest(
+                params=types.CallToolRequestParams(name="delay", arguments={}),
+            )
+            response = await client.post(
+                f"{base_url}/mcp",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    **call.model_dump(by_alias=True, mode="json", exclude_none=True),
+                },
+                headers=headers,
+            )
+            response.raise_for_status()
+            assert response.json()["result"]["content"][0]["text"] == "finished"
+    finally:
+        await _stop_stdio_proxy(process)
+
+    assert initialize_received.exists()
+    assert initialized.exists()
+    assert tool_call_entered.exists()
+    assert tool_call_finished.exists()
+    assert child_stopped.exists()
+    _assert_pid_reaped(child_pid)
