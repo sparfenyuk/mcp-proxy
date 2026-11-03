@@ -198,7 +198,17 @@ mcp-proxy --port=8080 --allow-origin='*' --expose-header Custom-Header uvx mcp-s
 If a default server is specified (the `command_or_url` argument without `--named-server` or `--named-server-config`), it will be accessible at the root paths (e.g., `http://127.0.0.1:8080/sse`).
 
 Named servers (whether defined by `--named-server` or `--named-server-config`) will be accessible under `/servers/<server-name>/` (e.g., `http://127.0.0.1:8080/servers/fetch1/sse`).
-The `/status` endpoint provides global status.
+The `/status` endpoint provides global status. Its `server_instances` keys normally use the configured
+named-server names and `default` for the positional server. If both a positional server and a named
+server called `default` are configured, all entries use route keys instead: `/` for the positional
+server and `/servers/<name>` for named servers. This keeps both instances distinct without reserving
+a configured name.
+
+If a named server fails with a spawn-stage operating-system error other than `TimeoutError`, an MCP
+initialization error, an initialization timeout, or stdout EOF observed before activation, `mcp-proxy`
+marks it as `failed` in `/status` and continues with the remaining named servers. Failed servers have
+no routes or advertised endpoints. Other startup failures, cleanup failures, and failures in the
+positional server remain fatal. Startup exits with an error if none of the configured servers starts.
 
 **JSON Configuration File Format for `--named-server-config`:**
 
