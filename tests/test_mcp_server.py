@@ -1183,6 +1183,95 @@ async def test_run_mcp_server_sse_url_logging(
         mock_logger.info.assert_any_call("  - %s", expected_named_url)
 
 
+def _advertised_urls(messages: list[str]) -> dict[str, list[str]]:
+    """Group the startup log's '  - <url>' lines under their 'Serving MCP Servers via' header."""
+    advertised: dict[str, list[str]] = {}
+    current: list[str] | None = None
+    for message in messages:
+        if message.startswith("Serving MCP Servers via "):
+            current = advertised.setdefault(message.removeprefix("Serving MCP Servers via "), [])
+        elif current is not None and message.startswith("  - "):
+            current.append(message.removeprefix("  - "))
+        else:
+            current = None
+    return advertised
+
+
+@pytest.mark.parametrize(
+    ("with_default", "named"),
+    [(True, []), (False, ["alpha"]), (True, ["alpha", "beta"])],
+    ids=["default", "named", "default-and-named"],
+)
+async def test_startup_log_advertises_reachable_sse_and_streamable_http_urls(
+    *,
+    with_default: bool,
+    named: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Every URL the startup log advertises, for both transports, serves a real MCP session."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    base_url = f"http://127.0.0.1:{port}"
+    prefixes = ([""] if with_default else []) + [f"/servers/{name}" for name in named]
+    connected: list[str] = []
+
+    async def connect_to_advertised(advertised: dict[str, list[str]]) -> None:
+        for url in advertised["StreamableHTTP:"]:
+            async with (
+                custom_httpx_client() as http_client,
+                streamable_http_client(url, http_client=http_client) as streams,
+                ClientSession(streams[0], streams[1]) as session,
+            ):
+                await session.initialize()
+                assert [tool.name for tool in (await session.list_tools()).tools] == ["echo"]
+                connected.append(url)
+        for url in advertised["SSE:"]:
+            async with (
+                sse_client(url=url, httpx_client_factory=custom_httpx_client) as streams,
+                ClientSession(*streams) as session,
+            ):
+                await session.initialize()
+                assert [tool.name for tool in (await session.list_tools()).tools] == ["echo"]
+                connected.append(url)
+
+    class ConnectingBackgroundServer(BackgroundServer):
+        async def serve(self) -> None:
+            task = asyncio.create_task(super().serve())
+            try:
+                with anyio.fail_after(10):
+                    while not self.started:  # noqa: ASYNC110
+                        await anyio.sleep(1e-3)
+                messages = [
+                    record.getMessage()
+                    for record in caplog.records
+                    if record.name == "mcp_proxy.mcp_server"
+                ]
+                advertised = _advertised_urls(messages)
+                assert advertised == {
+                    "SSE:": [f"{base_url}{prefix}/sse" for prefix in prefixes],
+                    "StreamableHTTP:": [f"{base_url}{prefix}/mcp" for prefix in prefixes],
+                }
+                with anyio.fail_after(20):
+                    await connect_to_advertised(advertised)
+            finally:
+                self.should_exit = self.force_exit = True
+                await task
+
+    caplog.set_level(logging.INFO, logger="mcp_proxy.mcp_server")
+    monkeypatch.setattr("mcp_proxy.mcp_server.uvicorn.Server", ConnectingBackgroundServer)
+    params = StdioServerParameters(command=sys.executable, args=["-c", _LOGGING_STDIO_SERVER])
+    async with _isolated_sse_server_lifetime():
+        await run_mcp_server(
+            MCPServerSettings(bind_host="127.0.0.1", port=port),
+            params if with_default else None,
+            dict.fromkeys(named, params),
+        )
+
+    assert len(connected) == 2 * len(prefixes)
+
+
 async def test_run_mcp_server_exception_handling(
     mock_settings: MCPServerSettings,
     mock_stdio_params: StdioServerParameters,
