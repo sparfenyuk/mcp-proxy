@@ -77,6 +77,19 @@ async def test_proxy_preserves_server_version() -> None:
     assert result.serverInfo.version == "2.4.1"
 
 
+async def test_server_instructions_are_preserved(
+    session_generator: SessionContextManager,
+) -> None:
+    """Test that initialization reports the server instructions directly and through the proxy."""
+    instructions = "Follow the upstream server instructions."
+    server: Server[object] = Server("test-server", instructions=instructions)
+
+    async with session_generator(server) as session:
+        result = await session.initialize()
+
+    assert result.instructions == instructions
+
+
 @pytest.fixture
 def server_can_list_prompts(server: Server[object], prompt: types.Prompt) -> Server[object]:
     """Return a server instance with prompts."""
