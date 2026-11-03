@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 RUN apk add --update --no-cache catatonit
 
 # Final stage with explicit platform specification
-FROM python:3.13-alpine
+FROM python:3.15-alpine
 
 COPY --from=uv /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
 COPY --from=uv /app/.venv /app/.venv
