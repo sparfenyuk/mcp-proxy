@@ -135,6 +135,9 @@ authentication. Protect remote deployments with network controls or an authentic
 `--sse-host` and `--sse-port` options are ineffective; use `--host` and `--port` instead. Additional environment
 variables can be passed to the local stdio server using `--env`. Put local server arguments after the `--` separator.
 
+Startup logs list the SSE and StreamableHTTP endpoints for each configured backend. With `--port=0`, they list endpoint
+paths because Uvicorn selects the actual port during startup; combine each path with Uvicorn's listening address.
+
 Arguments
 
 | Name                                 | Required                   | Description                                                                                   | Example                                     |

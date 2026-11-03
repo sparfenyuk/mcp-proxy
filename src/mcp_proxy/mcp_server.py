@@ -479,23 +479,36 @@ async def _prepare_stdio_server_routes(
     return instance_routes
 
 
-def _log_sse_urls(
+def _log_server_urls(
     settings: MCPServerSettings,
     default_server_params: StdioServerParameters | None,
     named_server_params: dict[str, StdioServerParameters],
 ) -> None:
-    """Log the SSE endpoints for each configured backend."""
-    base_url = f"http://{settings.bind_host}:{settings.port}"
-    sse_urls = []
+    """Log the SSE and StreamableHTTP endpoints for each configured backend."""
+    dynamic_port = settings.port == 0
+    base_url = (
+        ""
+        if dynamic_port
+        else f"http://{_bracket_host(settings.bind_host.strip('[]'))}:{settings.port}"
+    )
+    prefixes = [""] if default_server_params else []
+    prefixes.extend(f"/servers/{name}" for name in named_server_params)
+    if not prefixes:
+        return
 
-    if default_server_params:
-        sse_urls.append(f"{base_url}/sse")
-    sse_urls.extend([f"{base_url}/servers/{name}/sse" for name in named_server_params])
+    if dynamic_port:
+        logger.info(
+            "The server is using an ephemeral port; combine these endpoint paths "
+            "with the Uvicorn listening address."
+        )
 
-    if sse_urls:
-        logger.info("Serving MCP Servers via SSE:")
-        for url in sse_urls:
-            logger.info("  - %s", url)
+    for header, path in (
+        ("Serving MCP Servers via SSE:", "/sse"),
+        ("Serving MCP Servers via StreamableHTTP:", "/mcp"),
+    ):
+        logger.info(header)
+        for prefix in prefixes:
+            logger.info("  - %s", f"{base_url}{prefix}{path}")
 
 
 async def run_mcp_server(
@@ -607,7 +620,7 @@ async def run_mcp_server(
         http_server = uvicorn.Server(config)
         stdio_exit.attach(http_server)
 
-        _log_sse_urls(mcp_settings, default_server_params, named_server_params)
+        _log_server_urls(mcp_settings, default_server_params, named_server_params)
 
         logger.debug(
             "Serving incoming MCP requests on %s:%s",
