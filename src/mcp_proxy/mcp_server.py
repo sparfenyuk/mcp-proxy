@@ -485,11 +485,22 @@ def _log_server_urls(
     named_server_params: dict[str, StdioServerParameters],
 ) -> None:
     """Log the SSE and StreamableHTTP endpoints for each configured backend."""
-    base_url = f"http://{settings.bind_host}:{settings.port}"
+    dynamic_port = settings.port == 0
+    base_url = (
+        ""
+        if dynamic_port
+        else f"http://{_bracket_host(settings.bind_host.strip('[]'))}:{settings.port}"
+    )
     prefixes = [""] if default_server_params else []
     prefixes.extend(f"/servers/{name}" for name in named_server_params)
     if not prefixes:
         return
+
+    if dynamic_port:
+        logger.info(
+            "The server is using an ephemeral port; combine these endpoint paths "
+            "with the Uvicorn listening address."
+        )
 
     for header, path in (
         ("Serving MCP Servers via SSE:", "/sse"),

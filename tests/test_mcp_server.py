@@ -744,6 +744,7 @@ async def test_run_mcp_server_no_servers_configured(mock_settings: MCPServerSett
     with patch("mcp_proxy.mcp_server.logger") as mock_logger:
         await run_mcp_server(mock_settings, None, {})
         mock_logger.error.assert_called_once_with("No servers configured to run.")
+        mock_logger.info.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -1140,12 +1141,36 @@ async def test_run_mcp_server_global_status_updates(
         assert _global_status["server_instances"]["test_server"] == "configured"
 
 
-async def test_run_mcp_server_sse_url_logging(
+@pytest.mark.parametrize(
+    "log_case",
+    [
+        (
+            "::1",
+            8080,
+            ["http://[::1]:8080/sse", "http://[::1]:8080/servers/test_server/sse"],
+            ["http://[::1]:8080/mcp", "http://[::1]:8080/servers/test_server/mcp"],
+        ),
+        (
+            "127.0.0.1",
+            0,
+            ["/sse", "/servers/test_server/sse"],
+            ["/mcp", "/servers/test_server/mcp"],
+        ),
+    ],
+    ids=["ipv6-fixed-port", "port-zero"],
+)
+async def test_run_mcp_server_endpoint_url_logging(
     mock_settings: MCPServerSettings,
     mock_stdio_params: StdioServerParameters,
+    caplog: pytest.LogCaptureFixture,
+    log_case: tuple[str, int, list[str], list[str]],
 ) -> None:
-    """Test run_mcp_server logs correct SSE URLs."""
+    """Test run_mcp_server logs usable endpoint URLs for fixed and dynamic ports."""
+    bind_host, port, expected_sse, expected_streamable = log_case
+    mock_settings.bind_host = bind_host
+    mock_settings.port = port
     named_servers = {"test_server": mock_stdio_params}
+    caplog.set_level(logging.INFO, logger="mcp_proxy.mcp_server")
 
     with (
         patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
@@ -1153,7 +1178,6 @@ async def test_run_mcp_server_sse_url_logging(
         patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
         patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
         patch("uvicorn.Server") as mock_uvicorn_server,
-        patch("mcp_proxy.mcp_server.logger") as mock_logger,
     ):
         # Setup mocks
         mock_stdio_context, mock_session_context, _, mock_http_manager, mock_routes = (
@@ -1172,15 +1196,27 @@ async def test_run_mcp_server_sse_url_logging(
         # Run the function
         await run_mcp_server(mock_settings, mock_stdio_params, named_servers)
 
-        # Verify SSE URLs were logged
-        expected_default_url = f"http://{mock_settings.bind_host}:{mock_settings.port}/sse"
-        expected_named_url = (
-            f"http://{mock_settings.bind_host}:{mock_settings.port}/servers/test_server/sse"
-        )
+        messages = [
+            record.getMessage()
+            for record in caplog.records
+            if record.name == "mcp_proxy.mcp_server"
+        ]
 
-        mock_logger.info.assert_any_call("Serving MCP Servers via SSE:")
-        mock_logger.info.assert_any_call("  - %s", expected_default_url)
-        mock_logger.info.assert_any_call("  - %s", expected_named_url)
+        assert _advertised_urls(messages) == {
+            "SSE:": expected_sse,
+            "StreamableHTTP:": expected_streamable,
+        }
+        dynamic_port_note = (
+            "The server is using an ephemeral port; combine these endpoint paths "
+            "with the Uvicorn listening address."
+        )
+        if port == 0:
+            assert messages.count(dynamic_port_note) == 1
+            assert messages.index(dynamic_port_note) < messages.index(
+                "Serving MCP Servers via SSE:"
+            )
+        else:
+            assert dynamic_port_note not in messages
 
 
 def _advertised_urls(messages: list[str]) -> dict[str, list[str]]:
