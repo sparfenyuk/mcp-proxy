@@ -129,7 +129,9 @@ graph LR
 ### 2.1 Configuration
 
 Configure the HTTP server with `--host` and `--port`; the defaults are `127.0.0.1` and an available port. A wildcard
-bind such as `0.0.0.0` requires `--allowed-host` entries for the Host authorities clients will use. The deprecated
+bind such as `0.0.0.0` requires `--allowed-host` entries for the Host authorities clients will use. These host checks
+and CORS settings do not authenticate callers; `--headers` is for upstream client requests, not incoming server
+authentication. Protect remote deployments with network controls or an authenticated reverse proxy. The deprecated
 `--sse-host` and `--sse-port` options are ineffective; use `--host` and `--port` instead. Additional environment
 variables can be passed to the local stdio server using `--env`. Put local server arguments after the `--` separator.
 
@@ -294,16 +296,26 @@ docker run --rm -t sparfenyuk/mcp-proxy:v0.12.0 --help
 
 ## Extending the container image
 
-You can extend the `mcp-proxy` container image to include additional executables or
-configure the bundled `uv`. For example, this image restricts `uv` to the system Python:
+The published `mcp-proxy` image includes `uv` and `uvx`, but not Node.js or npm. To run Node.js MCP servers with
+`npx`, build a custom extension image:
 
 ```Dockerfile
 # file: mcp-proxy.Dockerfile
 
 FROM ghcr.io/sparfenyuk/mcp-proxy:latest
 
+RUN apk add --no-cache nodejs npm
 ENV UV_PYTHON_PREFERENCE=only-system
 ```
+
+Build and run the custom image:
+
+```bash
+docker build -f mcp-proxy.Dockerfile -t mcp-proxy-custom .
+docker run --rm -t mcp-proxy-custom --port=8080 -- npx -y @modelcontextprotocol/server-filesystem /tmp
+```
+
+The first `npx` launch needs network access to download a package that is not already cached.
 
 To check a locally built image, run the opt-in container tests:
 
