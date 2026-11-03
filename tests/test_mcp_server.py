@@ -2,9 +2,11 @@
 # ruff: noqa: PLR2004
 
 import asyncio
+import builtins
 import contextlib
 import logging
 import os
+import shlex
 import signal
 import socket
 import sys
@@ -23,6 +25,7 @@ from mcp.client.stdio import StdioServerParameters
 from mcp.client.streamable_http import streamable_http_client, streamablehttp_client
 from mcp.server import Server
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from mcp.shared.exceptions import McpError
 from sse_starlette import sse as sse_module
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -33,6 +36,7 @@ from mcp_proxy.httpx_client import custom_httpx_client
 from mcp_proxy.mcp_server import (
     DEFAULT_EXPOSE_HEADERS,
     MCPServerSettings,
+    _StdioExitWatch,
     create_single_instance_routes,
     run_mcp_server,
 )
@@ -100,12 +104,12 @@ def _backend_entry_handler(
     return handle_entry
 
 
-async def _wait_for_proxy_ready(base_url: str) -> None:
+async def _wait_for_proxy_ready(base_url: str, health_path: str = "/healthz") -> None:
     async with custom_httpx_client(timeout=httpx.Timeout(1, connect=0.1)) as client:
         deadline = asyncio.get_running_loop().time() + 10
         while asyncio.get_running_loop().time() < deadline:
             try:
-                response = await client.get(f"{base_url}/healthz")
+                response = await client.get(f"{base_url}{health_path}")
             except httpx.HTTPError:
                 await asyncio.sleep(0.05)
                 continue
@@ -258,6 +262,185 @@ def _assert_pid_reaped(pid_file: Path) -> None:
     if sys.platform != "win32":
         with pytest.raises(ProcessLookupError):
             os.kill(int(pid_file.read_text()), 0)
+
+
+def _issue198_stdio_server_script(  # noqa: PLR0913
+    name: str,
+    pid_file: Path,
+    stopped_file: Path,
+    *,
+    mode: str = "healthy",
+    initialize_received: Path | None = None,
+    checked_pid_file: Path | None = None,
+    pid_check_result: Path | None = None,
+) -> str:
+    """Build a small real stdio child for named-startup integration tests."""
+    initialize_received_path = str(initialize_received) if initialize_received else None
+    checked_pid_path = str(checked_pid_file) if checked_pid_file else None
+    pid_check_result_path = str(pid_check_result) if pid_check_result else None
+    return f"""
+import json, os, pathlib, sys
+name = {name!r}
+mode = {mode!r}
+pid_file = pathlib.Path({str(pid_file)!r})
+stopped_file = pathlib.Path({str(stopped_file)!r})
+pid_file.write_text(str(os.getpid()))
+checked_pid_file = {checked_pid_path!r}
+pid_check_result = {pid_check_result_path!r}
+if checked_pid_file is not None and pid_check_result is not None:
+    try:
+        os.kill(int(pathlib.Path(checked_pid_file).read_text()), 0)
+    except ProcessLookupError:
+        pathlib.Path(pid_check_result).write_text("reaped")
+    else:
+        pathlib.Path(pid_check_result).write_text("alive")
+try:
+    for line in sys.stdin:
+        request = json.loads(line)
+        method = request.get("method")
+        if method == "initialize":
+            initialize_received = {initialize_received_path!r}
+            if initialize_received is not None:
+                pathlib.Path(initialize_received).touch()
+            if mode == "eof":
+                break
+            if mode == "timeout":
+                continue
+            result = dict(
+                protocolVersion=request["params"]["protocolVersion"],
+                capabilities=dict(tools=dict()),
+                serverInfo=dict(name="issue198-" + name, version="1"),
+            )
+        elif method == "notifications/initialized":
+            if mode == "exit-after-initialized":
+                break
+            continue
+        elif method == "tools/list":
+            result = dict(tools=[dict(
+                name="echo",
+                description="Synthetic echo",
+                inputSchema=dict(type="object", properties=dict(message=dict(type="string"))),
+            )])
+        elif method == "tools/call":
+            result = dict(
+                content=[dict(type="text", text=request["params"]["arguments"]["message"])],
+                isError=False,
+            )
+        else:
+            result = dict()
+        if "id" in request:
+            print(json.dumps(dict(jsonrpc="2.0", id=request["id"], result=result)), flush=True)
+finally:
+    stopped_file.touch()
+"""
+
+
+async def _start_named_stdio_proxy(
+    servers: list[tuple[str, str]],
+    *,
+    initialization_timeout: float = 1,
+) -> asyncio.subprocess.Process:
+    command = [
+        sys.executable,
+        "-m",
+        "mcp_proxy",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "0",
+        "--initialization-timeout",
+        str(initialization_timeout),
+    ]
+    for name, server_command in servers:
+        command.extend(["--named-server", name, server_command])
+    return await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+
+
+async def _wait_for_proxy_url(
+    process: asyncio.subprocess.Process,
+    *,
+    before_listen: t.Callable[[], None] | None = None,
+) -> tuple[str, str]:
+    assert process.stdout is not None
+    output: list[str] = []
+    deadline = asyncio.get_running_loop().time() + 10
+    while asyncio.get_running_loop().time() < deadline:
+        try:
+            line = await asyncio.wait_for(
+                process.stdout.readline(),
+                timeout=max(0.01, deadline - asyncio.get_running_loop().time()),
+            )
+        except TimeoutError as exc:
+            message = "proxy did not log its listening address\n" + "".join(output)
+            raise AssertionError(message) from exc
+        if not line:
+            await process.wait()
+            raise AssertionError(
+                f"proxy exited before listening with status {process.returncode}\n"
+                + "".join(output)
+            )
+        output.append(line.decode(errors="replace"))
+        marker = "Uvicorn running on http://127.0.0.1:"
+        if marker in output[-1]:
+            if before_listen is not None:
+                before_listen()
+            port = output[-1].split(marker, 1)[1].split()[0]
+            return f"http://127.0.0.1:{port}", "".join(output)
+    raise AssertionError("proxy did not log its listening address\n" + "".join(output))
+
+
+async def _wait_for_file(path: Path) -> None:
+    deadline = asyncio.get_running_loop().time() + 5
+    exists = await asyncio.to_thread(path.exists)
+    while not exists and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0.01)
+        exists = await asyncio.to_thread(path.exists)
+    assert exists, f"expected child event was not written: {path.name}"
+
+
+async def _exercise_backend(base_url: str, path_prefix: str, expected_server: str) -> None:
+    prefix = f"{base_url}{path_prefix}"
+    async with (
+        custom_httpx_client(timeout=httpx.Timeout(8)) as http_client,
+        streamable_http_client(f"{prefix}/mcp", http_client=http_client) as streams,
+        ClientSession(streams[0], streams[1]) as session,
+    ):
+        initialized = await session.initialize()
+        assert initialized.serverInfo.name == expected_server
+        assert [tool.name for tool in (await session.list_tools()).tools] == ["echo"]
+        result = await session.call_tool("echo", {"message": "issue198 transport proof"})
+        assert result.content[0].text == "issue198 transport proof"
+
+    async with (
+        sse_client(
+            url=f"{prefix}/sse",
+            httpx_client_factory=custom_httpx_client,
+        ) as streams,
+        ClientSession(*streams) as session,
+    ):
+        initialized = await session.initialize()
+        assert initialized.serverInfo.name == expected_server
+        assert [tool.name for tool in (await session.list_tools()).tools] == ["echo"]
+        result = await session.call_tool("echo", {"message": "issue198 transport proof"})
+        assert result.content[0].text == "issue198 transport proof"
+
+
+async def _exercise_positional_backend_with_named_default(
+    base_url: str,
+) -> tuple[dict[str, str], int, int]:
+    async with custom_httpx_client(timeout=httpx.Timeout(8)) as client:
+        status_response = await client.get(f"{base_url}/status")
+        assert status_response.status_code == httpx.codes.OK
+        server_instances = status_response.json()["server_instances"]
+        root_health_status = (await client.get(f"{base_url}/healthz")).status_code
+        named_health_status = (await client.get(f"{base_url}/servers/default/healthz")).status_code
+
+    await _exercise_backend(base_url, "", "issue198-root")
+    return server_instances, root_health_status, named_health_status
 
 
 def create_starlette_app(
@@ -774,6 +957,31 @@ async def test_run_mcp_server_rejects_invalid_initialization_timeout_before_chil
     mock_stdio_client.assert_not_called()
 
 
+async def test_named_spawn_timeout_is_fatal_and_does_not_start_later_server(
+    mock_stdio_params: StdioServerParameters,
+) -> None:
+    """A spawn timeout remains fatal rather than becoming a skippable OSError."""
+    from mcp_proxy.mcp_server import _global_status  # noqa: PLC0415
+
+    _global_status["server_instances"].clear()
+    settings = MCPServerSettings(bind_host="127.0.0.1", port=0, initialization_timeout=0.5)
+
+    with (
+        patch(
+            "mcp_proxy.mcp_server.stdio_client",
+            side_effect=TimeoutError("issue198 spawn timeout"),
+        ) as mock_stdio_client,
+        pytest.raises(TimeoutError, match="issue198 spawn timeout"),
+    ):
+        await run_mcp_server(
+            settings,
+            named_server_params={"first": mock_stdio_params, "later": mock_stdio_params},
+        )
+
+    mock_stdio_client.assert_called_once_with(mock_stdio_params)
+    assert _global_status["server_instances"] == {}
+
+
 async def test_run_mcp_server_with_default_server(
     mock_settings: MCPServerSettings,
     mock_stdio_params: StdioServerParameters,
@@ -824,8 +1032,11 @@ async def test_run_mcp_server_with_named_servers(
     mock_stdio_params: StdioServerParameters,
 ) -> None:
     """Test run_mcp_server with named servers configuration."""
+    from mcp_proxy.mcp_server import _global_status  # noqa: PLC0415
+
+    _global_status["server_instances"].clear()
     named_servers = {
-        "server1": mock_stdio_params,
+        "default": mock_stdio_params,
         "server2": StdioServerParameters(
             command="python",
             args=["-m", "mcp_server"],
@@ -867,7 +1078,7 @@ async def test_run_mcp_server_with_named_servers(
         # Check that named servers were logged
         mock_logger.info.assert_any_call(
             "Setting up named server '%s': %s %s",
-            "server1",
+            "default",
             mock_stdio_params.command,
             " ".join(mock_stdio_params.args),
         )
@@ -878,6 +1089,10 @@ async def test_run_mcp_server_with_named_servers(
             "-m mcp_server",
         )
 
+        assert _global_status["server_instances"] == {
+            "default": "configured",
+            "server2": "configured",
+        }
         mock_server_instance.serve.assert_called_once()
 
 
@@ -1394,6 +1609,531 @@ for line in sys.stdin:
 """
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="PID liveness checks are unavailable on Windows"
+)
+@pytest.mark.parametrize("failure", ["missing", "eof", "timeout"])
+async def test_named_stdio_startup_failure_keeps_healthy_siblings_serving(  # noqa: PLR0915
+    tmp_path: Path,
+    failure: str,
+) -> None:
+    """A named spawn or initialization failure leaves healthy named servers usable."""
+    good_pid = tmp_path / "good-pid"
+    good_stopped = tmp_path / "good-stopped"
+    good_initialized = tmp_path / "good-initialized"
+    broken_pid = tmp_path / "broken-pid"
+    broken_stopped = tmp_path / "broken-stopped"
+    broken_initialized = tmp_path / "broken-initialize-received"
+    later_pid = tmp_path / "later-pid"
+    later_stopped = tmp_path / "later-stopped"
+    later_initialized = tmp_path / "later-initialized"
+    later_pid_check = tmp_path / "broken-reaped-before-later-spawn"
+
+    def child_command(  # noqa: PLR0913
+        name: str,
+        pid_file: Path,
+        stopped_file: Path,
+        *,
+        mode: str = "healthy",
+        initialize_received: Path | None = None,
+        checked_pid_file: Path | None = None,
+        pid_check_result: Path | None = None,
+    ) -> str:
+        script = tmp_path / f"{name}.py"
+        script.write_text(
+            _issue198_stdio_server_script(
+                name,
+                pid_file,
+                stopped_file,
+                mode=mode,
+                initialize_received=initialize_received,
+                checked_pid_file=checked_pid_file,
+                pid_check_result=pid_check_result,
+            ),
+        )
+        return shlex.join([sys.executable, str(script)])
+
+    healthy_command = child_command(
+        "good",
+        good_pid,
+        good_stopped,
+        initialize_received=good_initialized,
+    )
+    if failure == "missing":
+        broken_command = shlex.join([str(tmp_path / "issue198-command-does-not-exist")])
+    else:
+        broken_command = child_command(
+            "broken",
+            broken_pid,
+            broken_stopped,
+            mode=failure,
+            initialize_received=broken_initialized,
+        )
+    later_command = child_command(
+        "later",
+        later_pid,
+        later_stopped,
+        initialize_received=later_initialized,
+        checked_pid_file=None if failure == "missing" else broken_pid,
+        pid_check_result=None if failure == "missing" else later_pid_check,
+    )
+    process = await _start_named_stdio_proxy(
+        [("good", healthy_command), ("broken", broken_command), ("later", later_command)],
+        initialization_timeout=0.5,
+    )
+    startup_output = ""
+    try:
+        base_url, startup_output = await _wait_for_proxy_url(process)
+        await _wait_for_proxy_ready(base_url, "/servers/good/healthz")
+        await _wait_for_file(good_initialized)
+        await _wait_for_file(later_initialized)
+        if failure != "missing":
+            await _wait_for_file(broken_stopped)
+            await _wait_for_file(later_pid_check)
+            assert later_pid_check.read_text() == "reaped"
+            _assert_pid_reaped(broken_pid)
+
+        async with custom_httpx_client(timeout=httpx.Timeout(8)) as client:
+            status_response = await client.get(f"{base_url}/status")
+            assert status_response.status_code == httpx.codes.OK
+            assert status_response.json()["server_instances"] == {
+                "good": "configured",
+                "broken": "failed",
+                "later": "configured",
+            }
+            for name in ("good", "later"):
+                assert (
+                    await client.get(f"{base_url}/servers/{name}/healthz")
+                ).status_code == httpx.codes.NO_CONTENT
+            assert (
+                await client.get(f"{base_url}/servers/broken/healthz")
+            ).status_code == httpx.codes.NOT_FOUND
+
+        await _exercise_backend(base_url, "/servers/good", "issue198-good")
+        await _exercise_backend(base_url, "/servers/later", "issue198-later")
+        assert os.kill(int(good_pid.read_text()), 0) is None
+        assert os.kill(int(later_pid.read_text()), 0) is None
+        assert "/servers/broken/sse" not in startup_output
+        assert "/servers/broken/mcp" not in startup_output
+        failure_lines = [
+            line for line in startup_output.splitlines() if "Skipping named server" in line
+        ]
+        assert len(failure_lines) == 1
+        assert "issue198-command-does-not-exist" not in failure_lines[0]
+        assert "FileNotFoundError" not in failure_lines[0]
+    finally:
+        if process.returncode is None:
+            process.send_signal(signal.SIGTERM)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=12)
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+        await process.communicate()
+        for pid_file in (good_pid, broken_pid, later_pid):
+            if pid_file.exists():
+                await _wait_for_file(pid_file.with_name(pid_file.name.replace("pid", "stopped")))
+                _assert_pid_reaped(pid_file)
+
+    assert process.returncode is not None
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="PID liveness checks are unavailable on Windows"
+)
+async def test_named_default_collision_preserves_root_backend_identity(tmp_path: Path) -> None:
+    """A named default failure cannot mask the positional backend's active exit."""
+    root_pid = tmp_path / "root-pid"
+    root_stopped = tmp_path / "root-stopped"
+    root_initialized = tmp_path / "root-initialized"
+    named_pid = tmp_path / "named-pid"
+    named_stopped = tmp_path / "named-stopped"
+    named_initialized = tmp_path / "named-initialized"
+    root_script = tmp_path / "root.py"
+    named_script = tmp_path / "named.py"
+    root_script.write_text(
+        _issue198_stdio_server_script(
+            "root",
+            root_pid,
+            root_stopped,
+            initialize_received=root_initialized,
+        ),
+    )
+    named_script.write_text(
+        _issue198_stdio_server_script(
+            "default",
+            named_pid,
+            named_stopped,
+            mode="eof",
+            initialize_received=named_initialized,
+        ),
+    )
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "mcp_proxy",
+        sys.executable,
+        str(root_script),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "0",
+        "--initialization-timeout",
+        "0.5",
+        "--named-server",
+        "default",
+        shlex.join([sys.executable, str(named_script)]),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    root_exit_timed_out = False
+    startup_output = ""
+    collision_state: tuple[dict[str, str], int, int] = ({}, 0, 0)
+    try:
+
+        def assert_named_default_reaped() -> None:
+            assert named_stopped.exists()
+            _assert_pid_reaped(named_pid)
+
+        base_url, startup_output = await _wait_for_proxy_url(
+            process,
+            before_listen=assert_named_default_reaped,
+        )
+        await _wait_for_proxy_ready(base_url)
+        await _wait_for_file(root_initialized)
+        await _wait_for_file(named_initialized)
+
+        collision_state = await _exercise_positional_backend_with_named_default(base_url)
+        assert os.kill(int(root_pid.read_text()), 0) is None
+        os.kill(int(root_pid.read_text()), signal.SIGTERM)
+        try:
+            await asyncio.wait_for(process.wait(), timeout=10)
+        except TimeoutError:
+            root_exit_timed_out = True
+    finally:
+        if process.returncode is None:
+            process.send_signal(signal.SIGTERM)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=12)
+            except TimeoutError:
+                process.kill()
+                await process.wait()
+        remaining_output, _ = await process.communicate()
+        _assert_pid_reaped(root_pid)
+        if named_pid.exists():
+            _assert_pid_reaped(named_pid)
+
+    output = startup_output + remaining_output.decode(errors="replace")
+    assert (
+        collision_state,
+        "/servers/default/sse" not in startup_output,
+        "/servers/default/mcp" not in startup_output,
+        root_exit_timed_out,
+        process.returncode,
+        "Stdio server 'default' exited, shutting down" in output,
+    ) == (
+        (
+            {"/": "configured", "/servers/default": "failed"},
+            httpx.codes.NO_CONTENT,
+            httpx.codes.NOT_FOUND,
+        ),
+        True,
+        True,
+        False,
+        1,
+        True,
+    ), output
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="PID liveness checks are unavailable on Windows"
+)
+async def test_named_stdio_all_startup_failures_exit_without_listening(tmp_path: Path) -> None:
+    """All unavailable named servers fail startup instead of serving an empty proxy."""
+    broken_pid = tmp_path / "broken-pid"
+    broken_stopped = tmp_path / "broken-stopped"
+    broken_initialized = tmp_path / "broken-initialize-received"
+    broken_script = tmp_path / "broken.py"
+    broken_script.write_text(
+        _issue198_stdio_server_script(
+            "broken",
+            broken_pid,
+            broken_stopped,
+            mode="eof",
+            initialize_received=broken_initialized,
+        ),
+    )
+    process = await _start_named_stdio_proxy(
+        [
+            ("broken", shlex.join([sys.executable, str(broken_script)])),
+            ("missing", shlex.join([str(tmp_path / "issue198-command-does-not-exist")])),
+        ],
+        initialization_timeout=0.5,
+    )
+    output_bytes, _ = await asyncio.wait_for(process.communicate(), timeout=10)
+    output = output_bytes.decode(errors="replace")
+
+    assert process.returncode == 1
+    assert "No named servers could be started." in output
+    assert "Skipping named server 'broken'" in output
+    assert "Skipping named server 'missing'" in output
+    assert "Uvicorn running on" not in output
+    assert "Main application lifespan starting" not in output
+    await _wait_for_file(broken_initialized)
+    await _wait_for_file(broken_stopped)
+    _assert_pid_reaped(broken_pid)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="PID liveness checks are unavailable on Windows"
+)
+async def test_stdio_exit_observed_during_route_setup_is_not_activated(tmp_path: Path) -> None:
+    """A child EOF observed before activation is treated as a failed startup candidate."""
+    pid_file = tmp_path / "candidate-pid"
+    stopped_file = tmp_path / "candidate-stopped"
+    initialized_file = tmp_path / "candidate-initialized"
+    script = tmp_path / "candidate.py"
+    script.write_text(
+        _issue198_stdio_server_script(
+            "candidate",
+            pid_file,
+            stopped_file,
+            mode="exit-after-initialized",
+            initialize_received=initialized_file,
+        ),
+    )
+
+    class DelayedHTTPManager:
+        @contextlib.asynccontextmanager
+        async def run(self) -> t.AsyncIterator[None]:
+            await _wait_for_file(stopped_file)
+            await asyncio.sleep(0.05)
+            yield
+
+    with (
+        patch(
+            "mcp_proxy.mcp_server.create_single_instance_routes",
+            return_value=([], DelayedHTTPManager()),
+        ),
+        patch("uvicorn.Server") as mock_uvicorn_server,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        await run_mcp_server(
+            MCPServerSettings(bind_host="127.0.0.1", port=0),
+            named_server_params={
+                "candidate": StdioServerParameters(command=sys.executable, args=[str(script)]),
+            },
+        )
+
+    assert exc_info.value.code == 1
+    mock_uvicorn_server.assert_not_called()
+    await _wait_for_file(initialized_file)
+    await _wait_for_file(stopped_file)
+    _assert_pid_reaped(pid_file)
+
+
+@pytest.mark.parametrize("failure", ["runtime", "group", "cleanup", "oserror-initialize"])
+async def test_named_startup_does_not_skip_unsupported_or_cleanup_errors(
+    mock_settings: MCPServerSettings,
+    mock_stdio_params: StdioServerParameters,
+    failure: str,
+) -> None:
+    """Unsupported errors and cleanup failures escape the named skip boundary."""
+    if failure == "group" and sys.version_info < (3, 11):
+        pytest.skip("exception groups require Python 3.11")
+
+    mock_stdio_context, mock_session_context, _, _, _ = setup_async_context_mocks()
+
+    @contextlib.asynccontextmanager
+    async def broken_cleanup(
+        _params: StdioServerParameters,
+    ) -> t.AsyncIterator[tuple[t.Any, t.Any]]:
+        yield _OpenStdout(), AsyncMock()
+        raise RuntimeError("issue198 cleanup failure")
+
+    with (
+        patch("mcp_proxy.mcp_server.stdio_client") as mock_stdio_client,
+        patch("mcp_proxy.mcp_server.ClientSession") as mock_client_session,
+        patch("mcp_proxy.mcp_server.create_proxy_server") as mock_create_proxy,
+        patch("mcp_proxy.mcp_server.create_single_instance_routes") as mock_create_routes,
+        patch("uvicorn.Server") as mock_uvicorn_server,
+    ):
+        mock_stdio_client.return_value = (
+            broken_cleanup(mock_stdio_params) if failure == "cleanup" else mock_stdio_context
+        )
+        mock_client_session.return_value = mock_session_context
+        if failure == "runtime":
+            mock_create_proxy.side_effect = RuntimeError(
+                "issue198 unsupported initialization error"
+            )
+        elif failure == "group":
+            exception_group = builtins.__dict__["BaseExceptionGroup"]
+            mock_create_proxy.side_effect = exception_group(
+                "issue198 cancellation group",
+                [RuntimeError("issue198 group error"), asyncio.CancelledError()],
+            )
+        elif failure == "oserror-initialize":
+            mock_create_proxy.side_effect = OSError("issue198 initialization OS error")
+        else:
+            mock_create_proxy.side_effect = McpError(
+                types.ErrorData(code=-32000, message="init failure"),
+            )
+
+        with pytest.raises(BaseException, match="issue198") as exc_info:
+            await run_mcp_server(
+                mock_settings,
+                named_server_params={"broken": mock_stdio_params, "later": mock_stdio_params},
+            )
+
+        mock_stdio_client.assert_called_once_with(mock_stdio_params)
+        mock_create_proxy.assert_called_once()
+        mock_create_routes.assert_not_called()
+        mock_uvicorn_server.assert_not_called()
+        assert type(exc_info.value).__name__ != "_StdioStartupFailureError"
+        if failure == "cleanup":
+            assert "issue198 cleanup failure" in str(exc_info.value)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="SIGTERM and PID checks are unavailable on Windows"
+)
+async def test_active_named_server_exit_during_later_startup_aborts_proxy(tmp_path: Path) -> None:
+    """An already active backend dying during another initialization remains fatal."""
+    good_pid = tmp_path / "good-pid"
+    good_stopped = tmp_path / "good-stopped"
+    good_initialized = tmp_path / "good-initialized"
+    pending_pid = tmp_path / "pending-pid"
+    pending_stopped = tmp_path / "pending-stopped"
+    pending_initialized = tmp_path / "pending-initialize-received"
+
+    def command(name: str, *, mode: str, pid: Path, stopped: Path, initialized: Path) -> str:
+        script = tmp_path / f"{name}.py"
+        script.write_text(
+            _issue198_stdio_server_script(
+                name,
+                pid,
+                stopped,
+                mode=mode,
+                initialize_received=initialized,
+            ),
+        )
+        return shlex.join([sys.executable, str(script)])
+
+    process = await _start_named_stdio_proxy(
+        [
+            (
+                "good",
+                command(
+                    "good",
+                    mode="healthy",
+                    pid=good_pid,
+                    stopped=good_stopped,
+                    initialized=good_initialized,
+                ),
+            ),
+            (
+                "pending",
+                command(
+                    "pending",
+                    mode="timeout",
+                    pid=pending_pid,
+                    stopped=pending_stopped,
+                    initialized=pending_initialized,
+                ),
+            ),
+        ],
+        initialization_timeout=10,
+    )
+    try:
+        await _wait_for_file(good_initialized)
+        await _wait_for_file(pending_initialized)
+        os.kill(int(good_pid.read_text()), signal.SIGTERM)
+        await asyncio.wait_for(process.wait(), timeout=5)
+        output_bytes, _ = await process.communicate()
+        output = output_bytes.decode(errors="replace")
+        assert process.returncode == 1
+        assert "Stdio server 'good' exited, shutting down" in output
+        assert "Skipping named server 'pending'" not in output
+        assert "Uvicorn running on" not in output
+    finally:
+        if process.returncode is None:
+            process.send_signal(signal.SIGTERM)
+            await asyncio.wait_for(process.wait(), timeout=12)
+        await process.communicate()
+        await _wait_for_file(pending_stopped)
+        _assert_pid_reaped(good_pid)
+        _assert_pid_reaped(pending_pid)
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32", reason="PID liveness checks are unavailable on Windows"
+)
+async def test_external_cancellation_reaps_active_and_pending_named_servers(tmp_path: Path) -> None:
+    """External cancellation propagates after pending and active child cleanup."""
+    child_paths = {
+        name: (
+            tmp_path / f"{name}-pid",
+            tmp_path / f"{name}-stopped",
+            tmp_path / f"{name}-initialized",
+        )
+        for name in ("good", "pending")
+    }
+    params = {}
+    for name, mode in (("good", "healthy"), ("pending", "timeout")):
+        pid_file, stopped_file, initialized_file = child_paths[name]
+        script = tmp_path / f"{name}.py"
+        script.write_text(
+            _issue198_stdio_server_script(
+                name,
+                pid_file,
+                stopped_file,
+                mode=mode,
+                initialize_received=initialized_file,
+            ),
+        )
+        params[name] = StdioServerParameters(command=sys.executable, args=[str(script)])
+
+    task = asyncio.create_task(
+        run_mcp_server(
+            MCPServerSettings(bind_host="127.0.0.1", port=0, initialization_timeout=20),
+            named_server_params=params,
+        ),
+    )
+    try:
+        await _wait_for_file(child_paths["good"][2])
+        await _wait_for_file(child_paths["pending"][2])
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=8)
+    finally:
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+                await asyncio.wait_for(task, timeout=8)
+        for pid_file, stopped_file, _ in child_paths.values():
+            await _wait_for_file(stopped_file)
+            _assert_pid_reaped(pid_file)
+
+
+def test_stdio_exit_watch_ignores_closed_children_and_cancels_startup() -> None:
+    """The watcher ignores shutdown noise and remains idempotent before HTTP attach."""
+    stdio_exit = _StdioExitWatch()
+    stdio_exit.closing.add("closing")
+    stdio_exit.active.add("closing")
+    stdio_exit._on_exit("closing")  # noqa: SLF001
+    stdio_exit._on_exit("untracked")  # noqa: SLF001
+    assert stdio_exit.exited == set()
+
+    startup_cancel_scope = MagicMock()
+    stdio_exit.startup_cancel_scope = startup_cancel_scope
+    stdio_exit.active.add("active")
+    stdio_exit._on_exit("active")  # noqa: SLF001
+    stdio_exit._on_exit("active")  # noqa: SLF001
+    startup_cancel_scope.cancel.assert_called()
+
+    assert stdio_exit.exited == {"active"}
+
+
 @pytest.mark.parametrize("named", [False, True])
 async def test_run_mcp_server_exits_non_zero_when_stdio_server_exits(*, named: bool) -> None:
     """When the stdio server exits, the proxy must exit non-zero instead of serving errors."""
@@ -1491,7 +2231,9 @@ async def test_sigterm_bounds_shutdown_with_pending_streamable_call(tmp_path: Pa
 
 
 @pytest.mark.parametrize("named", [False, True])
-async def test_stdio_initialization_timeout_reaps_child(tmp_path: Path, *, named: bool) -> None:
+async def test_stdio_initialization_timeout_reaps_child(  # noqa: PLR0915
+    tmp_path: Path, *, named: bool
+) -> None:
     """An unresponsive child times out and stack cleanup reaps all started children."""
 
     def child_script(
@@ -1575,9 +2317,19 @@ stopped.touch()
     )
     try:
         done, _ = await asyncio.wait({server_task}, timeout=3)
-        assert server_task in done, "startup did not hit the configured initialization deadline"
-        with pytest.RaisesGroup(TimeoutError, flatten_subgroups=True):
-            await server_task
+        if named:
+            assert server_task not in done, "proxy should keep serving the healthy default"
+            await _wait_for_file(silent_received)
+            await _wait_for_file(silent_stopped)
+            _assert_pid_reaped(silent_pid)
+            assert default_initialized is not None
+            await _wait_for_file(default_initialized)
+            assert default_pid is not None
+            assert os.kill(int(default_pid.read_text()), 0) is None
+        else:
+            assert server_task in done, "startup did not hit the configured initialization deadline"
+            with pytest.RaisesGroup(TimeoutError, flatten_subgroups=True):
+                await server_task
     finally:
         if not server_task.done():
             server_task.cancel()
