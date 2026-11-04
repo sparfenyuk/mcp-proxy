@@ -9,6 +9,7 @@ Tests are running in two modes:
 The same test code is run on both to ensure parity.
 """
 
+import json
 import typing as t
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -385,6 +386,72 @@ async def test_call_tool(
         assert call_args[0][1] == {}  # arguments
         # _context (third arg) may be None or an object depending on mode
         tool_callback.reset_mock()
+
+
+@pytest.mark.parametrize(
+    ("content", "structured_content", "expected_text"),
+    [
+        ([], {"answer": 42}, '{\n  "answer": 42\n}'),
+        (
+            [
+                types.TextContent(type="text", text=" \n"),
+                types.ImageContent(type="image", data="aGVsbG8=", mimeType="image/png"),
+            ],
+            {},
+            "{}",
+        ),
+        (
+            [types.TextContent(type="text", text="Readable upstream response")],
+            {"answer": 42},
+            None,
+        ),
+        (
+            [
+                types.TextContent(type="text", text=" \n"),
+                types.ImageContent(type="image", data="aGVsbG8=", mimeType="image/png"),
+            ],
+            None,
+            None,
+        ),
+    ],
+)
+async def test_proxy_adds_text_for_structured_only_tool_result(
+    server_can_list_tools: Server[object],
+    content: list[types.Content],
+    structured_content: dict[str, t.Any] | None,
+    expected_text: str | None,
+) -> None:
+    """Preserve tool result data and add readable text only when structured data needs it."""
+    metadata = {"source": "upstream"}
+    result = types.CallToolResult(
+        content=content,
+        structuredContent=structured_content,
+        isError=True,
+        _meta=metadata,
+    )
+
+    async def call_tool(_request: types.CallToolRequest) -> types.ServerResult:
+        return types.ServerResult(result)
+
+    server_can_list_tools.request_handlers[types.CallToolRequest] = call_tool
+
+    async with proxy(server_can_list_tools) as session:
+        await session.initialize()
+        assert len((await session.list_tools()).tools) == 1
+        proxied_result = await session.call_tool("tool", {})
+
+    expected_content = [*content]
+    if expected_text is not None:
+        expected_content.append(types.TextContent(type="text", text=expected_text))
+
+    assert proxied_result.content == expected_content
+    assert proxied_result.structuredContent == structured_content
+    assert proxied_result.isError
+    assert proxied_result.meta == metadata
+    assert result.content == content
+    if expected_text is not None:
+        assert json.loads(proxied_result.content[-1].text) == structured_content
+    assert proxied_result.structuredContent == structured_content
 
 
 @pytest.mark.parametrize(
