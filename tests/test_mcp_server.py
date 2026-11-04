@@ -4,6 +4,7 @@
 import asyncio
 import builtins
 import contextlib
+import json
 import logging
 import os
 import shlex
@@ -64,6 +65,41 @@ async def main():
 asyncio.run(main())
 """
 
+_AUTH_TEST_VALUE = "mcp-proxy-test-token"
+
+
+def _bearer_auth_stdio_server_script(calls_file: Path, env_file: Path) -> str:
+    """Build a real stdio backend that records calls and inherited auth environment."""
+    return f"""
+import asyncio, json, os, pathlib
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import TextContent, Tool
+
+calls_file = pathlib.Path({str(calls_file)!r})
+pathlib.Path({str(env_file)!r}).write_text(json.dumps({{
+    "auth": os.environ.get("MCP_PROXY_AUTH_TOKEN", "<missing>"),
+    "keep": os.environ.get("MCP_PROXY_KEEP", "<missing>"),
+}}))
+server = Server("bearer-auth-test")
+
+@server.list_tools()
+async def list_tools():
+    return [Tool(name="echo", description="Echo", inputSchema={{"type": "object"}})]
+
+@server.call_tool()
+async def call_tool(name, arguments):
+    with calls_file.open("a", encoding="utf-8") as calls:
+        calls.write(arguments["message"] + "\\n")
+    return [TextContent(type="text", text=arguments["message"])]
+
+async def main():
+    async with stdio_server() as (read_stream, write_stream):
+        await server.run(read_stream, write_stream, server.create_initialization_options())
+
+asyncio.run(main())
+"""
+
 
 _BLOCKING_STDIO_SERVER = """
 import asyncio
@@ -104,12 +140,17 @@ def _backend_entry_handler(
     return handle_entry
 
 
-async def _wait_for_proxy_ready(base_url: str, health_path: str = "/healthz") -> None:
+async def _wait_for_proxy_ready(
+    base_url: str,
+    health_path: str = "/healthz",
+    *,
+    headers: dict[str, str] | None = None,
+) -> None:
     async with custom_httpx_client(timeout=httpx.Timeout(1, connect=0.1)) as client:
         deadline = asyncio.get_running_loop().time() + 10
         while asyncio.get_running_loop().time() < deadline:
             try:
-                response = await client.get(f"{base_url}{health_path}")
+                response = await client.get(f"{base_url}{health_path}", headers=headers)
             except httpx.HTTPError:
                 await asyncio.sleep(0.05)
                 continue
@@ -224,6 +265,8 @@ async def _start_stdio_proxy(
     port: int,
     *,
     initialization_timeout: float | None = None,
+    auth_bearer_token: str | None = None,
+    pass_environment: bool = False,
 ) -> asyncio.subprocess.Process:
     command = [
         sys.executable,
@@ -238,10 +281,17 @@ async def _start_stdio_proxy(
     ]
     if initialization_timeout is not None:
         command.extend(["--initialization-timeout", str(initialization_timeout)])
+    if pass_environment:
+        command.append("--pass-environment")
+    env = None
+    if auth_bearer_token is not None:
+        env = os.environ.copy()
+        env["MCP_PROXY_AUTH_TOKEN"] = auth_bearer_token
     return await asyncio.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        env=env,
     )
 
 
@@ -2438,3 +2488,89 @@ async def test_initialization_timeout_does_not_limit_later_tool_call(tmp_path: P
     assert tool_call_finished.exists()
     assert child_stopped.exists()
     _assert_pid_reaped(child_pid)
+
+
+async def test_cli_bearer_auth_covers_sse_and_streamable_http_without_forwarding_token(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real CLI protects both transports and does not pass its inbound secret to stdio."""
+    auth_headers = {"Authorization": f"Bearer {_AUTH_TEST_VALUE}"}
+    calls_file = tmp_path / "tool-calls"
+    env_file = tmp_path / "child-env.json"
+    backend_script = tmp_path / "stdio_server.py"
+    backend_script.write_text(_bearer_auth_stdio_server_script(calls_file, env_file))
+    monkeypatch.setenv("MCP_PROXY_KEEP", "preserved-value")
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+
+    process = await _start_stdio_proxy(
+        backend_script,
+        port,
+        auth_bearer_token=_AUTH_TEST_VALUE,
+        pass_environment=True,
+    )
+    base_url = f"http://127.0.0.1:{port}"
+    try:
+        await _wait_for_proxy_url(process)
+        await _wait_for_file(env_file)
+        child_env = json.loads(env_file.read_text())
+        assert child_env == {"auth": "<missing>", "keep": "preserved-value"}
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8)) as client:
+            health = await client.get(f"{base_url}/healthz")
+            assert health.status_code == httpx.codes.UNAUTHORIZED
+            assert health.headers["www-authenticate"] == 'Bearer realm="mcp-proxy"'
+            rejected = await client.post(
+                f"{base_url}/mcp/",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "tools/call",
+                    "params": {"name": "echo", "arguments": {"message": "unauthorized"}},
+                },
+                headers={"Accept": "application/json, text/event-stream"},
+            )
+        assert rejected.status_code == httpx.codes.UNAUTHORIZED
+        assert not calls_file.exists()
+
+        await _wait_for_proxy_ready(base_url, headers=auth_headers)
+        session_id: str | None = None
+        async with (
+            custom_httpx_client(headers=auth_headers, timeout=httpx.Timeout(8)) as http_client,
+            streamable_http_client(f"{base_url}/mcp/", http_client=http_client) as streams,
+            ClientSession(streams[0], streams[1]) as session,
+        ):
+            initialized = await session.initialize()
+            assert initialized.serverInfo.name == "bearer-auth-test"
+            assert [tool.name for tool in (await session.list_tools()).tools] == ["echo"]
+            result = await session.call_tool("echo", {"message": "streamable café ☕"})
+            assert result.content[0].text == "streamable café ☕"
+            session_id = streams[2]()
+        assert session_id is not None
+
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8)) as client:
+            session_only = await client.get(
+                f"{base_url}/mcp/",
+                headers={"Mcp-Session-Id": session_id},
+            )
+        assert session_only.status_code == httpx.codes.UNAUTHORIZED
+
+        async with (
+            sse_client(
+                url=f"{base_url}/sse",
+                headers=auth_headers,
+                httpx_client_factory=custom_httpx_client,
+            ) as streams,
+            ClientSession(*streams) as session,
+        ):
+            initialized = await session.initialize()
+            assert initialized.serverInfo.name == "bearer-auth-test"
+            assert [tool.name for tool in (await session.list_tools()).tools] == ["echo"]
+            result = await session.call_tool("echo", {"message": "sse naïve résumé"})
+            assert result.content[0].text == "sse naïve résumé"
+    finally:
+        await _stop_stdio_proxy(process)
+
+    assert calls_file.read_text().splitlines() == ["streamable café ☕", "sse naïve résumé"]

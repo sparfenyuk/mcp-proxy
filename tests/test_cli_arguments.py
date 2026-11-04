@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import sys
 import typing as t
 from http import HTTPStatus
 from unittest.mock import Mock, patch
@@ -11,12 +13,23 @@ from httpx import ASGITransport, AsyncClient
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 
+from mcp_proxy import __main__ as cli
 from mcp_proxy.__main__ import _create_mcp_settings, _normalize_verify_ssl, _setup_argument_parser
 from mcp_proxy.httpx_client import custom_httpx_client
 from mcp_proxy.mcp_server import DEFAULT_EXPOSE_HEADERS
 
 if t.TYPE_CHECKING:
     from argparse import ArgumentParser
+    from pathlib import Path
+
+    from mcp.client.stdio import StdioServerParameters
+
+    from mcp_proxy.mcp_server import MCPServerSettings
+
+
+_INBOUND_ENV_VALUE = "inbound-secret"
+_CLI_CHILD_ENV_VALUE = "explicit-cli-token"
+_CONFIG_CHILD_ENV_VALUE = "explicit-config-token"
 
 
 @pytest.fixture
@@ -121,6 +134,123 @@ def test_create_mcp_settings_custom_expose_headers(parser: ArgumentParser) -> No
     )
     settings = _create_mcp_settings(args)
     assert settings.expose_headers == ["Custom-Header", "Another-Header"]
+
+
+@pytest.mark.parametrize(
+    ("cli_token", "env_token", "expected"),
+    [
+        (None, None, None),
+        (None, "environment-token", "environment-token"),
+        ("cli-token", "environment-token", "cli-token"),
+        ("", "environment-token", ""),
+        ("cli-token", "", "cli-token"),
+    ],
+)
+def test_inbound_bearer_token_uses_explicit_cli_precedence(
+    parser: ArgumentParser,
+    monkeypatch: pytest.MonkeyPatch,
+    cli_token: str | None,
+    env_token: str | None,
+    expected: str | None,
+) -> None:
+    """CLI presence, including an empty value, takes precedence over the inbound environment."""
+    if env_token is None:
+        monkeypatch.delenv("MCP_PROXY_AUTH_TOKEN", raising=False)
+    else:
+        monkeypatch.setenv("MCP_PROXY_AUTH_TOKEN", env_token)
+    options = [] if cli_token is None else ["--auth-bearer-token", cli_token]
+    args = parser.parse_args([*options, "stdio-server"])
+    assert _create_mcp_settings(args).auth_bearer_token == expected
+
+
+def test_inbound_bearer_token_help_does_not_show_configured_value(
+    parser: ArgumentParser,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Help documents the safer environment input without rendering its current value."""
+    monkeypatch.setenv("MCP_PROXY_AUTH_TOKEN", "help-output-secret")
+    help_text = parser.format_help()
+    assert "MCP_PROXY_AUTH_TOKEN" in help_text
+    assert "help-output-secret" not in help_text
+
+
+def test_reverse_client_mode_does_not_read_inbound_auth_setting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The inbound token setting is only constructed after the reverse-client early return."""
+    monkeypatch.setenv("MCP_PROXY_AUTH_TOKEN", "inbound-secret")
+    monkeypatch.setattr(sys, "argv", ["mcp-proxy", "https://upstream.example/sse"])
+    captured: list[str] = []
+    monkeypatch.setattr(
+        cli,
+        "_handle_sse_client_mode",
+        lambda *args, **_: captured.append(args[0].command_or_url),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_create_mcp_settings",
+        lambda _args: pytest.fail("server settings built"),
+    )
+    cli.main()
+    assert captured == ["https://upstream.example/sse"]
+
+
+def test_pass_environment_filters_only_inbound_auth_and_preserves_explicit_overlays(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Bulk child inheritance drops the gate secret before default/config overlays."""
+    config_path = tmp_path / "servers.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "named": {
+                        "command": "python",
+                        "args": ["-c", "pass"],
+                        "env": {"MCP_PROXY_AUTH_TOKEN": _CONFIG_CHILD_ENV_VALUE},
+                    },
+                },
+            },
+        ),
+    )
+    monkeypatch.setenv("MCP_PROXY_AUTH_TOKEN", _INBOUND_ENV_VALUE)
+    monkeypatch.setenv("MCP_PROXY_KEEP", "keep-value")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "mcp-proxy",
+            "--pass-environment",
+            "--named-server-config",
+            str(config_path),
+            "--env",
+            "MCP_PROXY_AUTH_TOKEN",
+            _CLI_CHILD_ENV_VALUE,
+            "python",
+        ],
+    )
+
+    async def capture_run_mcp_server(
+        *,
+        default_server_params: StdioServerParameters | None,
+        named_server_params: dict[str, StdioServerParameters],
+        mcp_settings: MCPServerSettings,
+    ) -> None:
+        assert default_server_params is not None
+        assert default_server_params.env["MCP_PROXY_AUTH_TOKEN"] == _CLI_CHILD_ENV_VALUE
+        assert default_server_params.env["MCP_PROXY_KEEP"] == "keep-value"
+        assert named_server_params["named"].env["MCP_PROXY_AUTH_TOKEN"] == _CONFIG_CHILD_ENV_VALUE
+        assert named_server_params["named"].env["MCP_PROXY_KEEP"] == "keep-value"
+        assert mcp_settings.auth_bearer_token == _INBOUND_ENV_VALUE
+
+    monkeypatch.setattr(cli, "run_mcp_server", capture_run_mcp_server)
+    cli.main()
+
+    assert _INBOUND_ENV_VALUE not in caplog.text
+    assert _CLI_CHILD_ENV_VALUE not in caplog.text
+    assert _CONFIG_CHILD_ENV_VALUE not in caplog.text
 
 
 def test_allowed_host_argument_accumulates_trusted_authorities(parser: ArgumentParser) -> None:
