@@ -130,10 +130,23 @@ graph LR
 
 Configure the HTTP server with `--host` and `--port`; the defaults are `127.0.0.1` and an available port. A wildcard
 bind such as `0.0.0.0` requires `--allowed-host` entries for the Host authorities clients will use. These host checks
-and CORS settings do not authenticate callers; `--headers` is for upstream client requests, not incoming server
-authentication. Protect remote deployments with network controls or an authenticated reverse proxy. The deprecated
-`--sse-host` and `--sse-port` options are ineffective; use `--host` and `--port` instead. Additional environment
-variables can be passed to the local stdio server using `--env`. Put local server arguments after the `--` separator.
+and CORS settings do not authenticate callers by default. `--headers` and `API_ACCESS_TOKEN` authenticate upstream
+client requests; they do not authenticate callers of this server.
+
+To require inbound authentication, set `MCP_PROXY_AUTH_TOKEN` or pass `--auth-bearer-token TOKEN`. An explicit CLI
+value takes precedence over the environment variable. Prefer the environment variable because local process tools may
+show command-line arguments. With neither value set, the server keeps its unauthenticated default. When enabled, every
+HTTP request needs `Authorization: Bearer TOKEN`, including requests to `/status`, `/healthz`, SSE, StreamableHTTP,
+and named-server routes. Health probes must send the token. Configured CORS preflight requests still work without a
+token; ordinary `OPTIONS` requests require one. Host and Origin checks continue to apply.
+
+`MCP_PROXY_AUTH_TOKEN` is removed from child processes when `--pass-environment` copies the proxy environment.
+Values passed explicitly with `--env` or a named-server configuration remain part of that server's environment.
+This shared token does not provide user identity or roles and does not make the proxy compliant with MCP OAuth.
+Use TLS or a trusted network/reverse proxy when exposing the server beyond a trusted local network.
+
+The deprecated `--sse-host` and `--sse-port` options are ineffective; use `--host` and `--port` instead. Additional
+environment variables can be passed to the local stdio server using `--env`. Put local server arguments after the `--` separator.
 
 Startup logs list the SSE and StreamableHTTP endpoints for each configured backend. With `--port=0`, they list endpoint
 paths because Uvicorn selects the actual port during startup; combine each path with Uvicorn's listening address.
@@ -145,6 +158,7 @@ Arguments
 | `command_or_url`                     | Yes                        | The command to spawn the MCP stdio server                                                     | uvx mcp-server-fetch                        |
 | `--port`                             | No, random available       | The MCP server port to listen on                                                              | 8080                                        |
 | `--host`                             | No, `127.0.0.1` by default | Host IP address to bind. Wildcard binds require explicit `--allowed-host` authorities.       | 0.0.0.0                                     |
+| `--auth-bearer-token`                | No                         | Require one shared Bearer token on every inbound HTTP request. Prefer `MCP_PROXY_AUTH_TOKEN`. | `<TOKEN>`                                  |
 | `--allowed-host`                     | No                         | Additional trusted Host authority; repeat for each hostname/IP and port clients use.         | --allowed-host mcp.example.com:8080         |
 | `--env`                              | No                         | Additional environment variables to pass to the MCP stdio server. Can be used multiple times. | FOO BAR                                     |
 | `--cwd`                              | No                         | The working directory to pass to the MCP stdio server process.                                | /tmp                                        |

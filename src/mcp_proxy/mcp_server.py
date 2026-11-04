@@ -1,6 +1,7 @@
 """Create a local SSE server that proxies requests to a stdio MCP server."""
 
 import contextlib
+import hmac
 import logging
 import math
 import sys
@@ -41,6 +42,9 @@ _MAX_PORT: Final[int] = 65535
 _HTTP_DEFAULT_PORT: Final[int] = 80
 _HOST_REJECTION_STATUS: Final[int] = 421
 _ORIGIN_REJECTION_STATUS: Final[int] = 403
+_BEARER_TOKEN_CHARS: Final[bytes] = (
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~+/"
+)
 
 
 def _default_expose_headers() -> list[str]:
@@ -59,6 +63,24 @@ class MCPServerSettings:
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     allowed_hosts: list[str] | None = None
     initialization_timeout: float | None = None
+    auth_bearer_token: str | None = None
+
+
+def _valid_bearer_token_bytes(token: bytes) -> bool:
+    token_chars, separator, padding = token.partition(b"=")
+    return (
+        bool(token_chars)
+        and all(character in _BEARER_TOKEN_CHARS for character in token_chars)
+        and (not separator or all(character == ord("=") for character in padding))
+    )
+
+
+def _valid_bearer_token(token: str) -> bool:
+    try:
+        token_bytes = token.encode("ascii")
+    except UnicodeEncodeError:
+        return False
+    return _valid_bearer_token_bytes(token_bytes)
 
 
 def _has_whitespace_or_control(value: str) -> bool:
@@ -285,6 +307,44 @@ class _TransportSecurityAdapter:
             return await response(scope, receive, send)
         await self.app(scope, receive, send)
         return None
+
+
+class _BearerAuthMiddleware:
+    """Require one valid shared Bearer credential on every HTTP request."""
+
+    def __init__(
+        self,
+        app: Callable[[Scope, Receive, Send], Awaitable[None]],
+        token: str,
+    ) -> None:
+        self.app = app
+        self.token = token.encode("ascii")
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        authorization = [
+            value for name, value in scope.get("headers", []) if name.lower() == b"authorization"
+        ]
+        if len(authorization) != 1 or not self._matches(authorization[0]):
+            response = Response(
+                "" if scope["method"] == "HEAD" else "Unauthorized",
+                status_code=401,
+                headers={"WWW-Authenticate": 'Bearer realm="mcp-proxy"'},
+            )
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+    def _matches(self, authorization: bytes) -> bool:
+        scheme, separator, token = authorization.partition(b" ")
+        if scheme.lower() != b"bearer" or not separator:
+            return False
+        token = token.lstrip(b" ")
+        return _valid_bearer_token_bytes(token) and hmac.compare_digest(token, self.token)
 
 
 # To store last activity for multiple servers if needed, though status endpoint is global for now.
@@ -702,6 +762,10 @@ async def _serve_mcp_server(
                     expose_headers=mcp_settings.expose_headers,
                 ),
             )
+        if mcp_settings.auth_bearer_token is not None:
+            middleware.append(
+                Middleware(_BearerAuthMiddleware, token=mcp_settings.auth_bearer_token),
+            )
 
         starlette_app = Starlette(
             debug=(mcp_settings.log_level == "DEBUG"),
@@ -745,6 +809,11 @@ async def run_mcp_server(
     named_server_params: dict[str, StdioServerParameters] | None = None,
 ) -> None:
     """Run stdio client(s) and expose an MCP server with multiple possible backends."""
+    if mcp_settings.auth_bearer_token is not None and not _valid_bearer_token(
+        mcp_settings.auth_bearer_token,
+    ):
+        raise ValueError("auth_bearer_token must be a valid non-empty RFC 6750 b64token")
+
     if mcp_settings.initialization_timeout is not None and (
         not math.isfinite(mcp_settings.initialization_timeout)
         or mcp_settings.initialization_timeout <= 0

@@ -28,6 +28,9 @@ for line in sys.stdin:
         print(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}), flush=True)
 """
 
+_AUTH_CONFIG_TEST_VALUE = "configured-test-value"
+_AUTH_VALID_TEST_VALUE = "a+/._~-Z=="
+
 
 async def _run_production_server(
     monkeypatch: pytest.MonkeyPatch,
@@ -56,6 +59,7 @@ async def _request(  # noqa: PLR0913
     *,
     method: str = "GET",
     body: bytes = b"",
+    query_string: bytes = b"",
     stop_after_start: bool = False,
 ) -> tuple[list[dict[str, Any]], int]:
     messages: list[dict[str, Any]] = []
@@ -81,7 +85,7 @@ async def _request(  # noqa: PLR0913
                 "scheme": "http",
                 "path": path,
                 "raw_path": path.encode(),
-                "query_string": b"",
+                "query_string": query_string,
                 "root_path": "",
                 "headers": headers,
                 "server": ("127.0.0.1", 8080),
@@ -658,3 +662,225 @@ async def test_sdk_body_limit_rejects_declared_and_streamed_oversize_requests(
             assert body_reads == 1, key
         else:
             assert status != 413
+
+
+@pytest.mark.asyncio
+async def test_run_mcp_server_rejects_requests_without_bearer_auth(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The production app rejects unauthenticated status, health, and MCP routes."""
+    responses: dict[str, tuple[list[dict[str, Any]], int]] = {}
+    settings = MCPServerSettings(
+        bind_host="127.0.0.1",
+        port=0,
+        auth_bearer_token=_AUTH_CONFIG_TEST_VALUE,
+    )
+
+    async def capture_app(app: Any) -> None:  # noqa: ANN401
+        for path, method, stop_after_start in (
+            ("/status", "GET", False),
+            ("/healthz", "GET", False),
+            ("/mcp", "POST", False),
+            ("/mcp/", "GET", True),
+            ("/mcp/", "DELETE", False),
+            ("/servers/named/healthz", "GET", False),
+            ("/servers/named/mcp/", "POST", False),
+            ("/sse", "GET", True),
+            ("/servers/named/sse", "GET", True),
+            ("/messages/", "POST", False),
+            ("/servers/named/messages/", "POST", False),
+            ("/healthz", "HEAD", False),
+        ):
+            responses[f"{method} {path}"] = await _request(
+                app,
+                path,
+                [
+                    (b"host", b"localhost"),
+                    *([(b"content-type", b"application/json")] if method == "POST" else []),
+                ],
+                method=method,
+                stop_after_start=stop_after_start,
+            )
+
+    await _run_production_server(monkeypatch, settings, capture_app)
+
+    for request, (messages, body_reads) in responses.items():
+        status = next(
+            message["status"] for message in messages if message["type"] == "http.response.start"
+        )
+        assert status == 401, request
+        assert body_reads == 0, request
+        response_start = next(
+            message for message in messages if message["type"] == "http.response.start"
+        )
+        challenge = dict(response_start["headers"])[b"www-authenticate"]
+        assert challenge == b'Bearer realm="mcp-proxy"', request
+        if request.startswith("HEAD"):
+            response_body = next(
+                message["body"] for message in messages if message["type"] == "http.response.body"
+            )
+            assert response_body == b""
+
+
+@pytest.mark.asyncio
+async def test_bearer_headers_are_strict_and_host_origin_guards_remain_outermost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only one exact Bearer credential passes; existing authority checks still reject."""
+    cases: dict[str, tuple[list[tuple[bytes, bytes]], bytes, int]] = {
+        "missing": ([(b"host", b"localhost")], b"", 401),
+        "empty-credential": (
+            [(b"host", b"localhost"), (b"authorization", b"Bearer ")],
+            b"",
+            401,
+        ),
+        "mixed-case-valid": (
+            [(b"host", b"localhost"), (b"AuthorIZATION", b"bEaReR  a+/._~-Z==")],
+            b"",
+            200,
+        ),
+        "duplicate": (
+            [
+                (b"host", b"localhost"),
+                (b"authorization", b"Bearer a+/._~-Z=="),
+                (b"Authorization", b"Bearer a+/._~-Z=="),
+            ],
+            b"",
+            401,
+        ),
+        "combined": (
+            [(b"host", b"localhost"), (b"authorization", b"Bearer a+/._~-Z==, Bearer a+/._~-Z==")],
+            b"",
+            401,
+        ),
+        "wrong": (
+            [(b"host", b"localhost"), (b"authorization", b"Bearer wrong")],
+            b"",
+            401,
+        ),
+        "tab-separator": (
+            [(b"host", b"localhost"), (b"authorization", b"Bearer\ta+/._~-Z==")],
+            b"",
+            401,
+        ),
+        "trailing-space": (
+            [(b"host", b"localhost"), (b"authorization", b"Bearer a+/._~-Z== ")],
+            b"",
+            401,
+        ),
+        "non-ascii": (
+            [(b"host", b"localhost"), (b"authorization", b"Bearer \xff")],
+            b"",
+            401,
+        ),
+        "basic": (
+            [(b"host", b"localhost"), (b"authorization", b"Basic a+/._~-Z==")],
+            b"",
+            401,
+        ),
+        "query-only": ([(b"host", b"localhost")], b"access_token=a+/._~-Z==", 401),
+        "cookie-only": (
+            [(b"host", b"localhost"), (b"cookie", b"access_token=a+/._~-Z==")],
+            b"",
+            401,
+        ),
+        "valid-token-bad-host": (
+            [(b"host", b"attacker.example"), (b"authorization", b"Bearer a+/._~-Z==")],
+            b"",
+            421,
+        ),
+        "valid-token-bad-origin": (
+            [
+                (b"host", b"localhost"),
+                (b"origin", b"https://attacker.example"),
+                (b"authorization", b"Bearer a+/._~-Z=="),
+            ],
+            b"",
+            403,
+        ),
+    }
+    results: dict[str, tuple[list[dict[str, Any]], int]] = {}
+
+    async def capture_app(app: Any) -> None:  # noqa: ANN401
+        for name, (headers, query_string, _) in cases.items():
+            results[name] = await _request(app, "/status", headers, query_string=query_string)
+
+    await _run_production_server(
+        monkeypatch,
+        MCPServerSettings(
+            bind_host="127.0.0.1",
+            port=0,
+            auth_bearer_token=_AUTH_VALID_TEST_VALUE,
+        ),
+        capture_app,
+    )
+
+    for name, (messages, body_reads) in results.items():
+        start = next(message for message in messages if message["type"] == "http.response.start")
+        assert start["status"] == cases[name][2], name
+        if start["status"] == 401:
+            assert body_reads == 0, name
+            assert dict(start["headers"])[b"www-authenticate"] == b'Bearer realm="mcp-proxy"'
+
+
+@pytest.mark.asyncio
+async def test_bearer_gate_preserves_cors_preflight_and_cors_headers_on_unauthorized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only CORS preflight skips auth; ordinary unauthorized requests keep CORS headers."""
+    results: dict[str, tuple[list[dict[str, Any]], int]] = {}
+
+    async def capture_app(app: Any) -> None:  # noqa: ANN401
+        common = [(b"host", b"localhost"), (b"origin", b"https://browser.example")]
+        results["preflight"] = await _request(
+            app,
+            "/status",
+            [
+                *common,
+                (b"access-control-request-method", b"GET"),
+                (b"access-control-request-headers", b"authorization"),
+            ],
+            method="OPTIONS",
+        )
+        results["ordinary-options"] = await _request(app, "/status", common, method="OPTIONS")
+        results["unauthorized-get"] = await _request(app, "/status", common)
+
+    await _run_production_server(
+        monkeypatch,
+        MCPServerSettings(
+            bind_host="127.0.0.1",
+            port=0,
+            allow_origins=["https://browser.example"],
+            auth_bearer_token=_AUTH_CONFIG_TEST_VALUE,
+        ),
+        capture_app,
+    )
+
+    preflight = results["preflight"][0][0]
+    assert preflight["status"] == 200
+    assert dict(preflight["headers"])[b"access-control-allow-origin"] == b"https://browser.example"
+    for name in ("ordinary-options", "unauthorized-get"):
+        start = results[name][0][0]
+        headers = dict(start["headers"])
+        assert start["status"] == 401, name
+        assert headers[b"www-authenticate"] == b'Bearer realm="mcp-proxy"'
+        assert headers[b"access-control-allow-origin"] == b"https://browser.example"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token", ["", "bad token", "bad=token", "bad\tvalue", "tøkën"])
+async def test_invalid_bearer_configuration_fails_before_backend_spawn(token: str) -> None:
+    """Invalid credentials fail at the server boundary without exposing their value."""
+    params = StdioServerParameters(command=sys.executable, args=["-c", _INITIALIZING_STDIO_SERVER])
+    error_message = "auth_bearer_token must be a valid non-empty RFC 6750 b64token"
+    with (
+        patch("mcp_proxy.mcp_server.stdio_client") as stdio_client,
+        pytest.raises(ValueError, match=error_message) as error,
+    ):
+        await run_mcp_server(
+            MCPServerSettings(bind_host="127.0.0.1", port=0, auth_bearer_token=token),
+            params,
+            {},
+        )
+    assert not token or token not in str(error.value)
+    stdio_client.assert_not_called()

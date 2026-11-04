@@ -264,6 +264,14 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         help="Host to expose an SSE server on. Default is 127.0.0.1",
     )
     mcp_server_group.add_argument(
+        "--auth-bearer-token",
+        metavar="TOKEN",
+        help=(
+            "Require a shared Bearer token for inbound HTTP requests. "
+            "Prefer MCP_PROXY_AUTH_TOKEN to keep it out of process arguments."
+        ),
+    )
+    mcp_server_group.add_argument(
         "--initialization-timeout",
         type=_positive_timeout,
         metavar="SECONDS",
@@ -502,6 +510,9 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         if not args_parsed.expose_headers
         else list(args_parsed.expose_headers)
     )
+    auth_bearer_token = args_parsed.auth_bearer_token
+    if auth_bearer_token is None:
+        auth_bearer_token = os.getenv("MCP_PROXY_AUTH_TOKEN")
     return MCPServerSettings(
         bind_host=args_parsed.host if args_parsed.host is not None else args_parsed.sse_host,
         port=args_parsed.port if args_parsed.port is not None else args_parsed.sse_port,
@@ -511,6 +522,7 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
         allowed_hosts=args_parsed.allowed_host,
         expose_headers=expose_headers,
         log_level="DEBUG" if args_parsed.debug else args_parsed.log_level,
+        auth_bearer_token=auth_bearer_token,
     )
 
 
@@ -548,6 +560,7 @@ def main() -> None:
     base_env: dict[str, str] = {}
     if args_parsed.pass_environment:
         base_env.update(os.environ)
+        base_env.pop("MCP_PROXY_AUTH_TOKEN", None)
 
     # Configure default server
     default_stdio_params = _configure_default_server(args_parsed, base_env, logger)
