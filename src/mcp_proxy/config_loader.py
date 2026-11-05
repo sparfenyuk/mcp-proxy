@@ -12,6 +12,28 @@ from mcp.client.stdio import StdioServerParameters
 logger = logging.getLogger(__name__)
 
 
+def _invalid_entry_reason(command: object, command_args: object, env: object) -> str | None:
+    """Return the skip-warning template for a malformed entry, or None if valid.
+
+    Kept separate so the loader stays under the complexity limit while the
+    three skip cases (missing command, non-list args, invalid env) keep
+    their distinct warning messages.
+    """
+    if not command:
+        return "Named server '%s' from config is missing 'command'. Skipping."
+    if not isinstance(command_args, list):
+        return "Named server '%s' from config has invalid 'args' (must be a list). Skipping."
+    if not (
+        isinstance(env, dict)
+        and all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())
+    ):
+        return (
+            "Named server '%s' from config has invalid 'env' (must be an object "
+            "of string values). Skipping."
+        )
+    return None
+
+
 def load_named_server_configs_from_file(
     config_file_path: str | Path,
     base_env: dict[str, str],
@@ -71,17 +93,9 @@ def load_named_server_configs_from_file(
         command_args = server_config.get("args", [])
         env = server_config.get("env", {})
 
-        if not command:
-            logger.warning(
-                "Named server '%s' from config is missing 'command'. Skipping.",
-                name,
-            )
-            continue
-        if not isinstance(command_args, list):
-            logger.warning(
-                "Named server '%s' from config has invalid 'args' (must be a list). Skipping.",
-                name,
-            )
+        skip_reason = _invalid_entry_reason(command, command_args, env)
+        if skip_reason is not None:
+            logger.warning(skip_reason, name)
             continue
 
         new_env = base_env.copy()

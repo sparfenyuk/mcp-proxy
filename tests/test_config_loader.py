@@ -212,6 +212,40 @@ def test_server_entry_invalid_args_type(
     )
 
 
+@pytest.mark.parametrize(
+    "invalid_env",
+    ["not_a_dict", ["A", "B"], None, {"A": 123}],
+)
+@patch("mcp_proxy.config_loader.logger")
+def test_server_entry_invalid_env_type(
+    mock_logger: Mock,
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+    invalid_env: object,
+) -> None:
+    """Test handling of server entries with an invalid env value.
+
+    A malformed env in one entry must be skipped with a warning, like a
+    missing command or a non-list args, instead of aborting the whole load
+    and taking healthy servers down with it.
+    """
+    config_content = {
+        "mcpServers": {
+            "server_invalid_env": {"command": "mycmd", "env": invalid_env},
+            "server_good": {"command": "mycmd", "env": {"A": "1"}},
+        },
+    }
+    tmp_config_path = create_temp_config_file(config_content)
+    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+    assert "server_invalid_env" not in loaded_params
+    assert "server_good" in loaded_params
+    assert loaded_params["server_good"].env == {"A": "1"}
+    mock_logger.warning.assert_called_with(
+        "Named server '%s' from config has invalid 'env' (must be an object "
+        "of string values). Skipping.",
+        "server_invalid_env",
+    )
+
+
 def test_empty_mcpservers_dict(create_temp_config_file: Callable[[dict[str, t.Any]], str]) -> None:
     """Test handling of configuration files with empty mcpServers dictionary."""
     config_content: dict[str, t.Any] = {"mcpServers": {}}
