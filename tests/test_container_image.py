@@ -4,9 +4,11 @@ Run with MCP_PROXY_TEST_IMAGE set to a local image tag. Containers have no netwo
 access, and fixture mounts are read-only.
 """
 
+import io
 import os
 import shutil
 import subprocess
+import tarfile
 import uuid
 from pathlib import Path
 from zipfile import ZipFile
@@ -60,9 +62,18 @@ def container_image() -> str:
     return image
 
 
+@pytest.fixture
+def container_flavor() -> str | None:
+    """Check flavor-specific behavior only when the caller selects a flavor."""
+    flavor = os.environ.get("MCP_PROXY_TEST_FLAVOR")
+    if flavor is not None:
+        assert flavor in {"alpine", "debian", "debian-node"}
+    return flavor
+
+
 def run_container(
     image: str,
-    entrypoint: str,
+    entrypoint: str | None,
     *args: str,
     fixtures: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
@@ -73,7 +84,9 @@ def run_container(
     command = [docker, "run", "--name", container_name, "--pull=never", "--network=none"]
     if fixtures is not None:
         command += ["--mount", f"type=bind,source={fixtures},target=/fixtures,readonly"]
-    command += ["--entrypoint", entrypoint, image, *args]
+    if entrypoint is not None:
+        command += ["--entrypoint", entrypoint]
+    command += [image, *args]
     # The command is a resolved Docker executable; no shell or host environment is forwarded.
     timed_out = False
     try:
@@ -109,6 +122,94 @@ def run_container(
                     "and forcibly removed"
                 )
                 raise AssertionError(timeout_message)
+
+
+def test_container_default_entrypoint_help(container_image: str) -> None:
+    """The image's configured supervisor and mcp-proxy entrypoint remain usable."""
+    result = run_container(container_image, None, "--help")
+    assert result.returncode == 0, result.stderr
+    assert "usage:" in result.stdout.lower()
+
+
+def test_container_runtime_flavor(container_image: str, container_flavor: str | None) -> None:
+    """An explicitly selected image flavor has the expected libc distribution."""
+    if container_flavor is None:
+        pytest.skip("Set MCP_PROXY_TEST_FLAVOR to check the image's runtime flavor")
+    expected_id = "alpine" if container_flavor == "alpine" else "debian"
+    result = run_container(container_image, "cat", "/etc/os-release")
+    assert result.returncode == 0, result.stderr
+    assert f"ID={expected_id}" in result.stdout.splitlines()
+
+
+def test_container_python_runtime(container_image: str) -> None:
+    """The venv metadata, runtime interpreter, and base image use one Python version."""
+    code = (
+        "from configparser import ConfigParser\n"
+        "from pathlib import Path\n"
+        "import os\n"
+        "import sys\n"
+        "config = ConfigParser()\n"
+        "config.read_string('[venv]\\n' + Path('/app/.venv/pyvenv.cfg').read_text())\n"
+        "print('.'.join(map(str, sys.version_info[:3])))\n"
+        "print(config['venv']['version_info'])\n"
+        "print(os.environ['PYTHON_VERSION'])\n"
+    )
+    result = run_container(container_image, "/app/.venv/bin/python", "-c", code)
+    assert result.returncode == 0, result.stderr
+    runtime, venv, image = result.stdout.splitlines()
+    assert runtime.startswith("3.13.")
+    assert runtime == venv == image
+
+
+def test_container_node_tools(container_image: str, container_flavor: str | None) -> None:
+    """The debian-node flavor exposes Node.js and both npm launchers."""
+    if container_flavor != "debian-node":
+        pytest.skip("Set MCP_PROXY_TEST_FLAVOR=debian-node to check Node.js tools")
+    for executable in ("node", "npm", "npx"):
+        result = run_container(container_image, executable, "--version")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip()
+        if executable == "node":
+            assert result.stdout.startswith("v24.")
+
+
+def test_container_npx_runs_local_tool_offline(
+    container_image: str, container_flavor: str | None, tmp_path: Path
+) -> None:
+    """Npx installs and launches a local dependency-free package without a registry."""
+    if container_flavor != "debian-node":
+        pytest.skip("Set MCP_PROXY_TEST_FLAVOR=debian-node to check offline npx")
+    package = tmp_path / "container-smoke-tool.tgz"
+    files = (
+        (
+            "package/package.json",
+            b'{"name":"container-smoke-tool","version":"1.0.0",'
+            b'"bin":{"container-smoke-tool":"bin/container-smoke-tool.js"}}',
+            0o644,
+        ),
+        (
+            "package/bin/container-smoke-tool.js",
+            b'#!/usr/bin/env node\nconsole.log("offline-node-tool-ok")\n',
+            0o755,
+        ),
+    )
+    with tarfile.open(package, "w:gz") as archive:
+        for name, contents, mode in files:
+            member = tarfile.TarInfo(name)
+            member.size = len(contents)
+            member.mode = mode
+            archive.addfile(member, io.BytesIO(contents))
+    result = run_container(
+        container_image,
+        "npx",
+        "--offline",
+        "--yes",
+        "--package=file:/fixtures/container-smoke-tool.tgz",
+        "container-smoke-tool",
+        fixtures=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "offline-node-tool-ok"
 
 
 @pytest.mark.parametrize("executable", ["uv", "uvx"])

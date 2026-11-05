@@ -10,17 +10,57 @@ on:
     paths:
       - src/**
       - Dockerfile
+      - Dockerfile.debian
       - pyproject.toml
+      - uv.lock
+      - tests/test_container_image.py
+      - .github/workflows/ci.yaml
+      - .github/workflows/cd.yaml
   pull_request:
     paths:
       - src/**
       - Dockerfile
+      - Dockerfile.debian
       - pyproject.toml
+      - uv.lock
+      - tests/test_container_image.py
+      - .github/workflows/ci.yaml
+      - .github/workflows/cd.yaml
 
 jobs:
   docker-hub:
-    name: Push multi-arch Docker image to Docker Hub
+    name: Push ${{ matrix.flavor }} multi-arch image to Docker Hub
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: alpine
+            dockerfile: Dockerfile
+            target: ""
+            base: docker.io/library/python:3.13-alpine
+            latest: auto
+            tags: |
+              type=sha,format=short,prefix=commit-
+              type=sha,format=short,prefix=commit-,suffix=-alpine
+              type=ref,event=tag
+              type=ref,event=tag,suffix=-alpine
+          - flavor: debian
+            dockerfile: Dockerfile.debian
+            target: debian
+            base: docker.io/library/python:3.13-slim-bookworm
+            latest: false
+            tags: |
+              type=sha,format=short,prefix=commit-,suffix=-debian
+              type=ref,event=tag,suffix=-debian
+          - flavor: debian-node
+            dockerfile: Dockerfile.debian
+            target: debian-node
+            base: docker.io/library/python:3.13-slim-bookworm
+            latest: false
+            tags: |
+              type=sha,format=short,prefix=commit-,suffix=-debian-node
+              type=ref,event=tag,suffix=-debian-node
     permissions:
       contents: read
 
@@ -33,14 +73,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 #v4.4.1
 
-      - name: Extract tags and labels for Docker
+      - name: Extract ${{ matrix.flavor }} tags and labels for Docker
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: sparfenyuk/mcp-proxy
-          tags: |
-            type=sha,format=short,prefix=commit-
-            type=ref,event=tag
+          tags: ${{ matrix.tags }}
+          flavor: latest=${{ matrix.latest }}
           labels: |
             org.opencontainers.image.authors=Sergey Parfenyuk
             org.opencontainers.image.source=https://github.com/sparfenyuk/mcp-proxy
@@ -48,7 +87,8 @@ jobs:
             org.opencontainers.image.title=mcp-proxy
             org.opencontainers.image.description=Connect to MCP servers that run on SSE transport, or expose stdio servers as an SSE server using the MCP Proxy server.
             org.opencontainers.image.licenses=MIT
-            org.opencontainers.image.base.name=docker.io/library/python:3.13-alpine
+            org.opencontainers.image.base.name=${{ matrix.base }}
+            io.mcp-proxy.container.flavor=${{ matrix.flavor }}
 
       - name: Log in to Docker Hub
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -57,17 +97,19 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build and push Docker image
+      - name: Build and push ${{ matrix.flavor }} image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache
+          cache-from: type=local,src=/tmp/.buildx-cache-${{ matrix.flavor }}
+          cache-to: type=local,dest=/tmp/.buildx-cache-${{ matrix.flavor }}
 
       - name: Clean Docker cache
         if: github.event_name != 'pull_request'
@@ -75,8 +117,38 @@ jobs:
           docker system prune --force
 
   ghcr-io:
-    name: Push multi-arch Docker image to ghcr.io
+    name: Push ${{ matrix.flavor }} multi-arch image to ghcr.io
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: alpine
+            dockerfile: Dockerfile
+            target: ""
+            base: docker.io/library/python:3.13-alpine
+            latest: auto
+            tags: |
+              type=sha,format=short,prefix=commit-
+              type=sha,format=short,prefix=commit-,suffix=-alpine
+              type=ref,event=tag
+              type=ref,event=tag,suffix=-alpine
+          - flavor: debian
+            dockerfile: Dockerfile.debian
+            target: debian
+            base: docker.io/library/python:3.13-slim-bookworm
+            latest: false
+            tags: |
+              type=sha,format=short,prefix=commit-,suffix=-debian
+              type=ref,event=tag,suffix=-debian
+          - flavor: debian-node
+            dockerfile: Dockerfile.debian
+            target: debian-node
+            base: docker.io/library/python:3.13-slim-bookworm
+            latest: false
+            tags: |
+              type=sha,format=short,prefix=commit-,suffix=-debian-node
+              type=ref,event=tag,suffix=-debian-node
     permissions:
       contents: read
       packages: write
@@ -90,14 +162,13 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 #v4.4.1
 
-      - name: Extract tags and labels for Docker
+      - name: Extract ${{ matrix.flavor }} tags and labels for Docker
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/sparfenyuk/mcp-proxy
-          tags: |
-            type=sha,format=short,prefix=commit-
-            type=ref,event=tag
+          tags: ${{ matrix.tags }}
+          flavor: latest=${{ matrix.latest }}
           labels: |
             org.opencontainers.image.authors=Sergey Parfenyuk
             org.opencontainers.image.source=https://github.com/sparfenyuk/mcp-proxy
@@ -105,7 +176,8 @@ jobs:
             org.opencontainers.image.title=mcp-proxy
             org.opencontainers.image.description=Connect to MCP servers that run on SSE transport, or expose stdio servers as an SSE server using the MCP Proxy server.
             org.opencontainers.image.licenses=MIT
-            org.opencontainers.image.base.name=docker.io/library/python:3.13-alpine
+            org.opencontainers.image.base.name=${{ matrix.base }}
+            io.mcp-proxy.container.flavor=${{ matrix.flavor }}
 
       - name: Log in to GHCR
         uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
@@ -115,17 +187,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Docker image
+      - name: Build and push ${{ matrix.flavor }} image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          file: ${{ matrix.dockerfile }}
+          target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=local,src=/tmp/.buildx-cache
-          cache-to: type=local,dest=/tmp/.buildx-cache
+          cache-from: type=local,src=/tmp/.buildx-cache-${{ matrix.flavor }}
+          cache-to: type=local,dest=/tmp/.buildx-cache-${{ matrix.flavor }}
 
       - name: Clean Docker cache
         if: github.event_name != 'pull_request'

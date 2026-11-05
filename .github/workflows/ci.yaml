@@ -82,9 +82,25 @@ jobs:
           include-hidden-files: true
 
   container:
-    name: Container runtime
+    name: Container runtime (${{ matrix.flavor }})
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: alpine
+            dockerfile: Dockerfile
+            target: ""
+            image: mcp-proxy:flavors-alpine
+          - flavor: debian
+            dockerfile: Dockerfile.debian
+            target: debian
+            image: mcp-proxy:flavors-debian
+          - flavor: debian-node
+            dockerfile: Dockerfile.debian
+            target: debian-node
+            image: mcp-proxy:flavors-debian-node
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -94,16 +110,23 @@ jobs:
 
       - run: mkdir coverage
       - run: uv sync --frozen --all-extras --all-packages
-      - run: docker build -t mcp-proxy:test .
+      - name: Build container image
+        run: |
+          target_args=()
+          if [[ -n "${{ matrix.target }}" ]]; then
+            target_args=(--target "${{ matrix.target }}")
+          fi
+          docker build --file "${{ matrix.dockerfile }}" "${target_args[@]}" --tag "${{ matrix.image }}" .
       - run: uv run --frozen coverage run -m pytest -q tests/test_container_image.py
         env:
-          MCP_PROXY_TEST_IMAGE: mcp-proxy:test
-          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-container
+          MCP_PROXY_TEST_IMAGE: ${{ matrix.image }}
+          MCP_PROXY_TEST_FLAVOR: ${{ matrix.flavor }}
+          COVERAGE_FILE: coverage/.coverage.${{ runner.os }}-container-${{ matrix.flavor }}
 
       - name: store coverage files
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: coverage-container
+          name: coverage-container-${{ matrix.flavor }}
           path: coverage
           include-hidden-files: true
 
