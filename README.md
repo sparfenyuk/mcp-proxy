@@ -295,11 +295,29 @@ uv tool install git+https://github.com/sparfenyuk/mcp-proxy
 ### Installing as container
 
 Starting from version 0.3.2, it's possible to pull and run the corresponding container image.
-Release images are published to GHCR and Docker Hub as multi-platform manifests for `linux/amd64` and `linux/arm64`;
+Images are published to GHCR and Docker Hub as multi-platform manifests for `linux/amd64` and `linux/arm64`;
 Docker selects the matching image for the host architecture automatically.
-The runtime image includes `uv` and `uvx`, so Python MCP servers can be launched
-without building a separate image to install these executables. Installing tools
-with dependencies that are not already cached still requires network access.
+
+The runtime image flavors are:
+
+| Flavor | Base | Tools |
+| --- | --- | --- |
+| `alpine` | Python 3.13 on Alpine Linux (musl) | `uv`, `uvx` |
+| `debian` | Python 3.13 on Debian Bookworm (glibc) | `uv`, `uvx` |
+| `debian-node` | Debian Bookworm (glibc) | `uv`, `uvx`, Node.js 24, `npm`, `npx` |
+
+The unsuffixed tags and `-alpine` tags select the Alpine image. For a release
+tag such as `vX.Y.Z`, the Debian images use `vX.Y.Z-debian` and
+`vX.Y.Z-debian-node`; main-branch commit tags use the matching
+`commit-<short-sha>-debian` and `commit-<short-sha>-debian-node` forms. New
+flavors are available only for builds made after this change is released;
+existing tags are not rebuilt. The existing automatic `latest` release alias
+continues to select Alpine. Debian flavors have no moving alias.
+
+Choose Debian when a Python package needs glibc. Choose `debian-node` when the
+MCP server needs Node.js tools; it can run `npx` packages but does not bundle
+all possible server-specific system libraries. Installing tools with
+dependencies that are not already cached still requires network access.
 
 ```bash
 docker run --rm -t ghcr.io/sparfenyuk/mcp-proxy:v0.12.0 --help
@@ -321,17 +339,19 @@ docker run --rm -t sparfenyuk/mcp-proxy:v0.12.0 --help
     }
   ```
 
-## Extending the container image
+## Extending a container image
 
-The published `mcp-proxy` image includes `uv` and `uvx`, but not Node.js or npm. To run Node.js MCP servers with
-`npx`, build a custom extension image:
+The `debian-node` flavor includes Node.js, `npm`, and `npx`. For other
+operating-system packages, extend a flavor with that distribution's package
+manager. Keep Python virtual environments on the same libc family as their
+build stage.
 
 ```Dockerfile
 # file: mcp-proxy.Dockerfile
 
-FROM ghcr.io/sparfenyuk/mcp-proxy:latest
+FROM ghcr.io/sparfenyuk/mcp-proxy:vX.Y.Z-alpine
 
-RUN apk add --no-cache nodejs npm
+RUN apk add --no-cache curl
 ENV UV_PYTHON_PREFERENCE=only-system
 ```
 
@@ -339,21 +359,33 @@ Build and run the custom image:
 
 ```bash
 docker build -f mcp-proxy.Dockerfile -t mcp-proxy-custom .
-docker run --rm -t mcp-proxy-custom --port=8080 -- npx -y @modelcontextprotocol/server-filesystem /tmp
+docker run --rm -p 127.0.0.1:8080:8080 mcp-proxy-custom \
+  --host=0.0.0.0 --port=8080 --allowed-host 127.0.0.1:8080 \
+  -- uvx mcp-server-fetch
 ```
 
-The first `npx` launch needs network access to download a package that is not already cached.
+The first `uvx` or `npx` launch needs network access to download a package that is not already cached.
+When exposing the proxy beyond a local test, continue to configure `--allowed-host`
+and allowed origins for the client-facing address. `--pass-environment` controls
+which host environment values reach spawned server processes; use it only when needed.
 
 To check a locally built image, run the opt-in container tests:
 
 ```bash
-docker build -t mcp-proxy:test .
-MCP_PROXY_TEST_IMAGE=mcp-proxy:test uv run --frozen pytest -q tests/test_container_image.py
+docker build -t mcp-proxy:flavors-alpine .
+MCP_PROXY_TEST_IMAGE=mcp-proxy:flavors-alpine MCP_PROXY_TEST_FLAVOR=alpine uv run --frozen pytest -q tests/test_container_image.py
+
+docker build -f Dockerfile.debian --target debian -t mcp-proxy:flavors-debian .
+MCP_PROXY_TEST_IMAGE=mcp-proxy:flavors-debian MCP_PROXY_TEST_FLAVOR=debian uv run --frozen pytest -q tests/test_container_image.py
+
+docker build -f Dockerfile.debian --target debian-node -t mcp-proxy:flavors-debian-node .
+MCP_PROXY_TEST_IMAGE=mcp-proxy:flavors-debian-node MCP_PROXY_TEST_FLAVOR=debian-node uv run --frozen pytest -q tests/test_container_image.py
 ```
 
-These tests disable container network access, run a local wheel through `uvx`, and
-launch an MCP server through `uv` to list and call a tool through the proxy.
-Without `MCP_PROXY_TEST_IMAGE`, the container tests are skipped.
+These tests disable container network access, run a local wheel through `uvx`,
+launch an MCP server through `uv`, and exercise a local `npx` package. Flavor
+checks are skipped when `MCP_PROXY_TEST_FLAVOR` is unset; all container tests
+are skipped when `MCP_PROXY_TEST_IMAGE` is unset.
 
 ## Docker Compose Setup
 
