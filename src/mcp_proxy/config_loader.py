@@ -12,6 +12,62 @@ from mcp.client.stdio import StdioServerParameters
 logger = logging.getLogger(__name__)
 
 
+def _validated_entry(
+    name: str, command: object, command_args: object, env: object
+) -> tuple[str, list[str], dict[str, str]] | None:
+    """Validate one named server entry and return its narrowed values.
+
+    Each malformed entry is logged with its own warning and skipped by
+    returning None, so one bad server never takes the healthy ones down.
+    Validation and typing live in the same place on purpose: the caller
+    only ever sees values that already passed the isinstance checks, so
+    no cast or ignore is needed to satisfy mypy.
+
+    Args:
+        name: The server name, used in the skip warning.
+        command: The raw ``command`` value from the config.
+        command_args: The raw ``args`` value from the config.
+        env: The raw ``env`` value from the config.
+
+    Returns:
+        A ``(command, args, env)`` tuple with narrowed types when the
+        entry is valid, or None when it was skipped.
+    """
+    if not command:
+        logger.warning("Named server '%s' from config is missing 'command'. Skipping.", name)
+        return None
+    if not isinstance(command, str):
+        logger.warning(
+            "Named server '%s' from config has invalid 'command' (must be a string). Skipping.",
+            name,
+        )
+        return None
+    if not isinstance(command_args, list):
+        logger.warning(
+            "Named server '%s' from config has invalid 'args' (must be a list). Skipping.",
+            name,
+        )
+        return None
+    if not all(isinstance(arg, str) for arg in command_args):
+        logger.warning(
+            "Named server '%s' from config has invalid 'args' (must be a list of "
+            "strings). Skipping.",
+            name,
+        )
+        return None
+    if not (
+        isinstance(env, dict)
+        and all(isinstance(k, str) and isinstance(v, str) for k, v in env.items())
+    ):
+        logger.warning(
+            "Named server '%s' from config has invalid 'env' (must be an object "
+            "of string values). Skipping.",
+            name,
+        )
+        return None
+    return command, command_args, env
+
+
 def load_named_server_configs_from_file(
     config_file_path: str | Path,
     base_env: dict[str, str],
@@ -71,18 +127,10 @@ def load_named_server_configs_from_file(
         command_args = server_config.get("args", [])
         env = server_config.get("env", {})
 
-        if not command:
-            logger.warning(
-                "Named server '%s' from config is missing 'command'. Skipping.",
-                name,
-            )
+        validated = _validated_entry(name, command, command_args, env)
+        if validated is None:
             continue
-        if not isinstance(command_args, list):
-            logger.warning(
-                "Named server '%s' from config has invalid 'args' (must be a list). Skipping.",
-                name,
-            )
-            continue
+        command, command_args, env = validated
 
         new_env = base_env.copy()
         new_env.update(env)
