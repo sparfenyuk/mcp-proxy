@@ -192,6 +192,54 @@ def test_server_entry_missing_command(
     )
 
 
+@pytest.mark.parametrize("invalid_command", [123, ["echo"], {"cmd": "echo"}])
+@patch("mcp_proxy.config_loader.logger")
+def test_server_entry_invalid_command_type(
+    mock_logger: Mock,
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+    invalid_command: object,
+) -> None:
+    """Test handling of server entries with a non-string command."""
+    config_content = {
+        "mcpServers": {
+            "server_invalid_command": {"command": invalid_command, "args": []},
+            "server_good": {"command": "echo", "args": ["hi"]},
+        },
+    }
+    tmp_config_path = create_temp_config_file(config_content)
+    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+    assert "server_invalid_command" not in loaded_params
+    assert "server_good" in loaded_params
+    mock_logger.warning.assert_called_with(
+        "Named server '%s' from config has invalid 'command' (must be a string). Skipping.",
+        "server_invalid_command",
+    )
+
+
+@pytest.mark.parametrize("invalid_args", [["hi", 123], [None], ["hi", {"a": 1}]])
+@patch("mcp_proxy.config_loader.logger")
+def test_server_entry_invalid_args_element_type(
+    mock_logger: Mock,
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+    invalid_args: object,
+) -> None:
+    """Test handling of server entries with non-string args elements."""
+    config_content = {
+        "mcpServers": {
+            "server_invalid_args": {"command": "echo", "args": invalid_args},
+            "server_good": {"command": "echo", "args": ["hi"]},
+        },
+    }
+    tmp_config_path = create_temp_config_file(config_content)
+    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+    assert "server_invalid_args" not in loaded_params
+    assert "server_good" in loaded_params
+    mock_logger.warning.assert_called_with(
+        "Named server '%s' from config has invalid 'args' (must be a list of strings). Skipping.",
+        "server_invalid_args",
+    )
+
+
 @patch("mcp_proxy.config_loader.logger")
 def test_server_entry_invalid_args_type(
     mock_logger: Mock,
