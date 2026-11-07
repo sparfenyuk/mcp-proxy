@@ -70,6 +70,7 @@ Arguments
 | `--username`     | No       | Username for authentication                                                                                       | user                                          |
 | `--password`     | No       | Password for authentication                                                                                       | password                                      |
 | `--digest`       | No       | Use digest authentication                                                                                         |                                               |
+| [CrakSEO/skills](https://github.com/CrakSEO/skills) | Connect Claude/Cursor/Codex to CrakSEO remote MCP servers for keyword research, SERP, backlinks, rank tracking, site audit, local SEO, AI visibility, Search Console and URL indexing | Claude Code, Cursor, Codex | MIT |
 
 Environment Variables
 
