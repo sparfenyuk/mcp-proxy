@@ -66,34 +66,19 @@ def custom_httpx_client(
                 "enabled" if normalized_verify else "disabled",
             )
         else:
-            logger.debug(
-                "Configured httpx.AsyncClient using certificate bundle at %s.",
-                normalized_verify,
-            )
+            logger.debug("Configured httpx.AsyncClient with a custom certificate bundle.")
 
     # Add logging event hooks
     async def log_request(request: httpx.Request) -> None:
         """Log HTTP request details."""
-        logger.info(
-            "HTTP Request: %s %s",
-            request.method,
-            request.url.copy_with(username=None, password=None, query=None, fragment=None),
-        )
+        logger.info("HTTP Request: %s", request.method)
 
     async def log_response(response: httpx.Response) -> None:
         """Log HTTP response details."""
-        safe_url = response.request.url.copy_with(
-            username=None,
-            password=None,
-            query=None,
-            fragment=None,
-        )
         logger.info(
-            "HTTP Response: %s %s - %d %s",
+            "HTTP Response: %s - %d",
             response.request.method,
-            safe_url,
             response.status_code,
-            response.reason_phrase,
         )
 
     # Add event hooks
