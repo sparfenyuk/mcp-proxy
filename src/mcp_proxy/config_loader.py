@@ -111,7 +111,14 @@ def load_named_server_configs_from_file(
         logger.error(msg)
         raise ValueError(msg)
 
-    for name, server_config in config_data.get("mcpServers", {}).items():
+    servers = config_data["mcpServers"]
+    if not isinstance(servers, dict):
+        msg = f"Invalid config file format in {config_file_path}. 'mcpServers' must be an object."
+        logger.error(msg)
+        # Invalid config shapes use ValueError as documented by this loader.
+        raise ValueError(msg)  # noqa: TRY004
+
+    for name, server_config in servers.items():
         if not isinstance(server_config, dict):
             logger.warning(
                 "Skipping invalid server config for '%s' in %s. Entry is not a dictionary.",
