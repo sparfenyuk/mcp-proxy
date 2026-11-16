@@ -94,6 +94,16 @@ def test_load_config_with_not_enabled_server(
     assert "not_enabled_server" not in loaded_params
 
 
+@pytest.mark.parametrize("servers", [None, [], "server", 42, True])
+def test_mcp_servers_must_be_an_object(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str], servers: object
+) -> None:
+    """Reject a non-object server collection as an invalid configuration."""
+    path = create_temp_config_file({"mcpServers": servers})
+    with pytest.raises(ValueError, match="'mcpServers' must be an object"):
+        load_named_server_configs_from_file(path, {})
+
+
 def test_file_not_found() -> None:
     """Test handling of non-existent configuration files."""
     with pytest.raises(FileNotFoundError):
