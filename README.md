@@ -259,6 +259,7 @@ The JSON file should follow this structure:
 - `mcpServers`: A dictionary where each key is the server name (used in the URL path, e.g., `/servers/fetch/`) and the value is an object defining the server.
 - `command`: (Required) The command to execute for the stdio server.
 - `args`: (Optional) A list of arguments for the command. Defaults to an empty list.
+- `cwd`: (Optional) Working directory for this server process. Relative paths resolve from the configuration file's directory. Omit it to inherit the proxy's working directory. For example, `"cwd": "./projects/notes"` lets a project-local server load its own files and configuration.
 - `enabled`: (Optional) If `false`, this server definition will be skipped. Defaults to `true`.
 - `timeout` and `transportType`: These fields are present in standard MCP client configurations but are currently **ignored** by `mcp-proxy` when loading named servers. The transport type is implicitly "stdio".
 
@@ -456,7 +457,7 @@ SSE/StreamableHTTP client options:
 stdio client options:
   args                  Any extra arguments to the command to spawn the default server. Ignored if only named servers are defined.
   -e, --env KEY VALUE   Environment variables used when spawning the default server. Can be used multiple times. For named servers, environment is inherited or passed via --pass-environment.
-  --cwd CWD             The working directory to use when spawning the default server process. Named servers inherit the proxy's CWD.
+  --cwd CWD             The working directory to use when spawning the default server process. Named servers inherit the proxy's CWD unless their JSON configuration sets cwd.
   --pass-environment, --no-pass-environment
                         Pass through all environment variables when spawning all server processes.
   --log-level LEVEL     Set the log level. Default is INFO.

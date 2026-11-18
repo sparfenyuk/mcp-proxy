@@ -12,9 +12,9 @@ from mcp.client.stdio import StdioServerParameters
 logger = logging.getLogger(__name__)
 
 
-def _validated_entry(
-    name: str, command: object, command_args: object, env: object
-) -> tuple[str, list[str], dict[str, str]] | None:
+def _validated_entry(  # noqa: PLR0911
+    name: str, command: object, command_args: object, env: object, cwd: object
+) -> tuple[str, list[str], dict[str, str], str | None] | None:
     """Validate one named server entry and return its narrowed values.
 
     Each malformed entry is logged with its own warning and skipped by
@@ -28,9 +28,10 @@ def _validated_entry(
         command: The raw ``command`` value from the config.
         command_args: The raw ``args`` value from the config.
         env: The raw ``env`` value from the config.
+        cwd: The raw ``cwd`` value from the config.
 
     Returns:
-        A ``(command, args, env)`` tuple with narrowed types when the
+        A ``(command, args, env, cwd)`` tuple with narrowed types when the
         entry is valid, or None when it was skipped.
     """
     if not command:
@@ -65,7 +66,14 @@ def _validated_entry(
             name,
         )
         return None
-    return command, command_args, env
+    if cwd is not None and (not isinstance(cwd, str) or not cwd):
+        logger.warning(
+            "Named server '%s' from config has invalid 'cwd' "
+            "(must be a non-empty string). Skipping.",
+            name,
+        )
+        return None
+    return command, command_args, env, cwd
 
 
 def load_named_server_configs_from_file(
@@ -127,10 +135,12 @@ def load_named_server_configs_from_file(
         command_args = server_config.get("args", [])
         env = server_config.get("env", {})
 
-        validated = _validated_entry(name, command, command_args, env)
+        validated = _validated_entry(name, command, command_args, env, server_config.get("cwd"))
         if validated is None:
             continue
-        command, command_args, env = validated
+        command, command_args, env, cwd = validated
+        if cwd is not None:
+            cwd = str((Path(config_file_path).resolve().parent / cwd).resolve())
 
         new_env = base_env.copy()
         new_env.update(env)
@@ -139,7 +149,7 @@ def load_named_server_configs_from_file(
             command=command,
             args=command_args,
             env=new_env,
-            cwd=None,
+            cwd=cwd,
         )
         logger.info(
             "Configured named server '%s' from config: %s %s",

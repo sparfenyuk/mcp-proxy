@@ -199,7 +199,7 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
         default=None,
         help=(
             "The working directory to use when spawning the default server process. "
-            "Named servers inherit the proxy's CWD."
+            "Named servers inherit the proxy's CWD unless their JSON configuration sets cwd."
         ),
     )
     stdio_client_options.add_argument(

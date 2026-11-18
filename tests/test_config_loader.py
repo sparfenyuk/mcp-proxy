@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import sys
 import tempfile
 import typing as t
 from collections.abc import Callable, Generator
@@ -9,7 +10,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
-from mcp.client.stdio import StdioServerParameters
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
 
 from mcp_proxy.config_loader import load_named_server_configs_from_file
 
@@ -346,3 +348,90 @@ def test_load_utf8_config(tmp_path: Path, bom: bytes) -> None:
 
     assert loaded_params["server1"].args == ["café"]
     assert loaded_params["server1"].env == {"GREETING": "안녕"}
+
+
+@pytest.mark.parametrize("cwd", ["project files", None])
+def test_named_server_working_directory(tmp_path: Path, cwd: str | None) -> None:
+    """Resolve a named server's working directory beside its configuration."""
+    config = tmp_path / "servers.json"
+    config.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "notes": {"command": "python", "cwd": cwd},
+                }
+            }
+        )
+    )
+    loaded = load_named_server_configs_from_file(config, {})
+    expected = str(tmp_path / cwd) if cwd is not None else None
+    assert loaded["notes"].cwd == expected
+
+
+def test_named_server_absolute_working_directory(tmp_path: Path) -> None:
+    """Preserve absolute working directories outside the configuration directory."""
+    config = tmp_path / "servers.json"
+    workspace = tmp_path.parent / "project files"
+    config.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "notes": {"command": "python", "cwd": str(workspace)},
+                }
+            }
+        )
+    )
+    loaded = load_named_server_configs_from_file(config, {})
+    assert loaded["notes"].cwd == str(workspace)
+
+
+@pytest.mark.parametrize("cwd", ["", 42, True, [], {}])
+def test_invalid_working_directory_skips_only_affected_server(
+    tmp_path: Path,
+    cwd: object,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A malformed working directory leaves other configured servers usable."""
+    config = tmp_path / "servers.json"
+    config.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "broken": {"command": "python", "cwd": cwd},
+                    "notes": {"command": "python"},
+                }
+            }
+        )
+    )
+    loaded = load_named_server_configs_from_file(config, {})
+    assert list(loaded) == ["notes"]
+    assert "invalid 'cwd'" in caplog.text
+
+
+async def test_named_servers_read_their_own_project_files(tmp_path: Path) -> None:
+    """Launch two project-local tools from one configuration."""
+    server_code = """
+from pathlib import Path
+from mcp.server.fastmcp import FastMCP
+
+server = FastMCP("project-notes")
+@server.tool()
+def read_project() -> str:
+    return Path("README.md").read_text()
+server.run()
+"""
+    servers = {}
+    for name in ("alpha", "beta"):
+        workspace = tmp_path / name
+        workspace.mkdir()
+        (workspace / "README.md").write_text(f"Notes for {name}")
+        servers[name] = {"command": sys.executable, "args": ["-c", server_code], "cwd": name}
+    config = tmp_path / "servers.json"
+    config.write_text(json.dumps({"mcpServers": servers}))
+
+    for name, params in load_named_server_configs_from_file(config, {}).items():
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool("read_project", {})
+            assert not result.isError
+            assert result.content[0].model_dump()["text"] == f"Notes for {name}"
