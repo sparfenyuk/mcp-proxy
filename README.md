@@ -32,6 +32,11 @@ The `mcp-proxy` is a tool that lets you switch between server transports. There 
 1. stdio to SSE/StreamableHTTP
 2. SSE to stdio
 
+Tool calls preserve upstream MCP protocol errors, including their error code and
+data. This lets clients handle errors such as URL elicitation required (`-32042`)
+without losing the authorization URL. Ordinary tool execution failures remain
+`isError` tool results. The proxy does not retry failed tool calls.
+
 ## 1. stdio to SSE/StreamableHTTP
 
 Run a proxy server from stdio that connects to a remote SSE server.

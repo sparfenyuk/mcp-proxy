@@ -20,7 +20,7 @@ import pytest
 from mcp import types
 from mcp.client.session import ClientSession
 from mcp.server import Server
-from mcp.shared.exceptions import McpError
+from mcp.shared.exceptions import McpError, UrlElicitationRequiredError
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import AnyUrl
 
@@ -386,6 +386,106 @@ async def test_call_tool(
         assert call_args[0][1] == {}  # arguments
         # _context (third arg) may be None or an object depending on mode
         tool_callback.reset_mock()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        types.ErrorData(
+            code=types.INVALID_PARAMS,
+            message="Missing account",
+            data={"field": "account"},
+        ),
+        types.ErrorData(
+            code=types.URL_ELICITATION_REQUIRED,
+            message="URL elicitation required",
+            data={
+                "elicitations": [
+                    {
+                        "mode": "url",
+                        "url": "https://example.invalid/authorize",
+                        "elicitationId": "auth-1",
+                        "message": "Authorize this tool",
+                    },
+                ],
+            },
+        ),
+    ],
+)
+async def test_call_tool_preserves_protocol_errors(
+    session_generator: SessionContextManager,
+    server_can_list_tools: Server[object],
+    error: types.ErrorData,
+) -> None:
+    """Keep protocol error codes and data available to clients on both paths."""
+    calls: list[dict[str, t.Any] | None] = []
+
+    async def call_tool(_request: types.CallToolRequest) -> types.ServerResult:
+        calls.append(_request.params.arguments)
+        if _request.params.arguments == {"ready": True}:
+            return types.ServerResult(
+                types.CallToolResult(content=[types.TextContent(type="text", text="Ready")]),
+            )
+        raise McpError(error)
+
+    server_can_list_tools.request_handlers[types.CallToolRequest] = call_tool
+
+    async with session_generator(server_can_list_tools) as session:
+        await session.initialize()
+        with pytest.raises(McpError) as raised:
+            await session.call_tool("tool", {})
+        assert raised.value.error == error
+        result = await session.call_tool("tool", {"ready": True})
+        assert not result.isError
+        assert result.content == [types.TextContent(type="text", text="Ready")]
+        assert calls == [{}, {"ready": True}]
+
+
+async def test_url_elicitation_from_tool_handler(
+    session_generator: SessionContextManager,
+    server_can_list_tools: Server[object],
+) -> None:
+    """A client must still be able to recover the upstream authorization URL."""
+    elicitation = types.ElicitRequestURLParams(
+        mode="url",
+        url="https://example.invalid/authorize",
+        elicitationId="auth-1",
+        message="Authorize this tool",
+    )
+
+    @server_can_list_tools.call_tool()  # type: ignore[misc]
+    async def require_authorization(
+        _name: str,
+        _arguments: dict[str, t.Any] | None,
+    ) -> types.CallToolResult:
+        raise UrlElicitationRequiredError([elicitation])
+
+    async with session_generator(server_can_list_tools) as session:
+        await session.initialize()
+        with pytest.raises(McpError) as raised:
+            await session.call_tool("tool", {})
+        challenge = UrlElicitationRequiredError.from_error(raised.value.error)
+        assert challenge.elicitations == [elicitation]
+
+
+async def test_call_tool_execution_errors_remain_tool_results(
+    session_generator: SessionContextManager,
+    server_can_list_tools: Server[object],
+) -> None:
+    """Ordinary tool failures must remain isError results rather than protocol errors."""
+
+    @server_can_list_tools.call_tool()  # type: ignore[misc]
+    async def fail_tool(
+        _name: str,
+        _arguments: dict[str, t.Any] | None,
+    ) -> types.CallToolResult:
+        raise ValueError("Upstream tool failed")
+
+    async with session_generator(server_can_list_tools) as session:
+        await session.initialize()
+        result = await session.call_tool("tool", {})
+        assert result.isError
+        assert result.content == [types.TextContent(type="text", text="Upstream tool failed")]
 
 
 @pytest.mark.parametrize(
