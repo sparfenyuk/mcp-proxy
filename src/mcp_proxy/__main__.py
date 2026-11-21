@@ -382,6 +382,12 @@ def _handle_sse_client_mode(
             client_secret=client_secret,
             token_url=token_url,
         )
+    elif client_id or client_secret or token_url:
+        logger.error(
+            "OAuth2 client credentials require all of --client-id, --client-secret, "
+            "and --token-url",
+        )
+        sys.exit(1)
     elif username and password:
         auth = DigestAuth(username, password) if digest else BasicAuth(username, password)
     elif username or password or digest:

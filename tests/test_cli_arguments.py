@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import typing as t
 from http import HTTPStatus
@@ -10,11 +11,17 @@ from unittest.mock import Mock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from httpx_auth import OAuth2ClientCredentials
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 
 from mcp_proxy import __main__ as cli
-from mcp_proxy.__main__ import _create_mcp_settings, _normalize_verify_ssl, _setup_argument_parser
+from mcp_proxy.__main__ import (
+    _create_mcp_settings,
+    _handle_sse_client_mode,
+    _normalize_verify_ssl,
+    _setup_argument_parser,
+)
 from mcp_proxy.httpx_client import custom_httpx_client
 from mcp_proxy.mcp_server import DEFAULT_EXPOSE_HEADERS
 
@@ -301,3 +308,61 @@ def test_initialization_timeout_settings(parser: ArgumentParser, value: str | No
     assert _create_mcp_settings(args).initialization_timeout == (
         None if value is None else float(value)
     )
+
+
+@pytest.mark.parametrize(
+    "oauth_flags",
+    [
+        ["--client-id", "cid"],
+        ["--client-secret", "secret"],
+        ["--token-url", "https://example.com/token"],
+        ["--client-id", "cid", "--token-url", "https://example.com/token"],
+        ["--client-id", "cid", "--client-secret", "secret"],
+        ["--client-secret", "secret", "--token-url", "https://example.com/token"],
+    ],
+)
+def test_partial_oauth2_flags_exit_without_connecting(
+    parser: ArgumentParser,
+    oauth_flags: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partial OAuth2 trio must fail fast instead of connecting without auth."""
+
+    async def must_not_connect(*_args: t.Any, **_kwargs: t.Any) -> None:  # noqa: ANN401
+        pytest.fail("partial OAuth2 flags must not start a client connection")
+
+    args = parser.parse_args([*oauth_flags, "https://example.com/sse"])
+    monkeypatch.setattr(cli, "run_sse_client", must_not_connect)
+    with pytest.raises(SystemExit):
+        _handle_sse_client_mode(args, logging.getLogger(__name__))
+
+
+def test_complete_oauth2_flags_build_client_credentials_auth(
+    parser: ArgumentParser,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All three OAuth2 flags together build an OAuth2 client-credentials auth handler."""
+    args = parser.parse_args(
+        [
+            "--client-id",
+            "cid",
+            "--client-secret",
+            "secret",
+            "--token-url",
+            "https://example.com/token",
+            "https://example.com/sse",
+        ],
+    )
+    captured: dict[str, t.Any] = {}
+
+    async def capture_run(
+        _url: str,
+        _headers: t.Any = None,  # noqa: ANN401
+        auth: t.Any = None,  # noqa: ANN401
+        **_kwargs: t.Any,  # noqa: ANN401
+    ) -> None:
+        captured["auth"] = auth
+
+    monkeypatch.setattr(cli, "run_sse_client", capture_run)
+    _handle_sse_client_mode(args, logging.getLogger(__name__))
+    assert isinstance(captured["auth"], OAuth2ClientCredentials)
