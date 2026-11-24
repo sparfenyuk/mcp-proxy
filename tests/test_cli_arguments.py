@@ -253,6 +253,31 @@ def test_pass_environment_filters_only_inbound_auth_and_preserves_explicit_overl
     assert _CONFIG_CHILD_ENV_VALUE not in caplog.text
 
 
+@pytest.mark.parametrize(
+    ("flags", "expected_port", "expected_host"),
+    [
+        ([], 0, "127.0.0.1"),
+        (["--port", "8080"], 8080, "127.0.0.1"),
+        (["--host", "0.0.0.0"], 0, "0.0.0.0"),  # noqa: S104
+        (["--sse-port", "8081"], 8081, "127.0.0.1"),
+        (["--sse-host", "0.0.0.0"], 0, "0.0.0.0"),  # noqa: S104
+        (["--port", "8080", "--sse-port", "8081"], 8080, "127.0.0.1"),
+        (["--host", "192.168.1.5", "--sse-host", "0.0.0.0"], 0, "192.168.1.5"),  # noqa: S104
+    ],
+)
+def test_deprecated_sse_port_and_host_still_configure_the_listener(
+    parser: ArgumentParser,
+    flags: list[str],
+    expected_port: int,
+    expected_host: str,
+) -> None:
+    """Deprecated --sse-port/--sse-host aliases bind the server when --port/--host are absent."""
+    args = parser.parse_args([*flags, "uvx", "mcp-server-fetch"])
+    settings = _create_mcp_settings(args)
+    assert settings.port == expected_port
+    assert settings.bind_host == expected_host
+
+
 def test_allowed_host_argument_accumulates_trusted_authorities(parser: ArgumentParser) -> None:
     """Repeated --allowed-host flags are preserved for server settings."""
     args = parser.parse_args(
