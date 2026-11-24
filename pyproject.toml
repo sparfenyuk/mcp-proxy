@@ -53,7 +53,7 @@ Changelog = "https://github.com/sparfenyuk/mcp-proxy/releases"
 
 [project.scripts]
 mcp-proxy = "mcp_proxy.__main__:main"
-mcp-reverse-proxy = "mcp_proxy.__main__:client"
+mcp-reverse-proxy = "mcp_proxy.__main__:main"
 
 [tool.setuptools.package-data]
 "*" = ["py.typed"]
