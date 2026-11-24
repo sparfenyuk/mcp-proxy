@@ -255,12 +255,12 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
     mcp_server_group.add_argument(
         "--port",
         type=int,
-        default=0,
+        default=None,
         help="Port to expose an SSE server on. Default is a random port",
     )
     mcp_server_group.add_argument(
         "--host",
-        default="127.0.0.1",
+        default=None,
         help="Host to expose an SSE server on. Default is 127.0.0.1",
     )
     mcp_server_group.add_argument(
@@ -290,12 +290,12 @@ def _add_arguments_to_parser(parser: argparse.ArgumentParser) -> None:
     mcp_server_group.add_argument(
         "--sse-port",
         type=int,
-        default=0,
+        default=None,
         help="(deprecated) Same as --port",
     )
     mcp_server_group.add_argument(
         "--sse-host",
-        default="127.0.0.1",
+        default=None,
         help="(deprecated) Same as --host",
     )
     mcp_server_group.add_argument(
@@ -513,9 +513,11 @@ def _create_mcp_settings(args_parsed: argparse.Namespace) -> MCPServerSettings:
     auth_bearer_token = args_parsed.auth_bearer_token
     if auth_bearer_token is None:
         auth_bearer_token = os.getenv("MCP_PROXY_AUTH_TOKEN")
+    bind_host = args_parsed.host if args_parsed.host is not None else args_parsed.sse_host
+    port = args_parsed.port if args_parsed.port is not None else args_parsed.sse_port
     return MCPServerSettings(
-        bind_host=args_parsed.host if args_parsed.host is not None else args_parsed.sse_host,
-        port=args_parsed.port if args_parsed.port is not None else args_parsed.sse_port,
+        bind_host=bind_host if bind_host is not None else "127.0.0.1",
+        port=port if port is not None else 0,
         stateless=args_parsed.stateless,
         initialization_timeout=args_parsed.initialization_timeout,
         allow_origins=args_parsed.allow_origin if len(args_parsed.allow_origin) > 0 else None,
