@@ -18,6 +18,15 @@
         "@modelcontextprotocol/server-github"
       ],
       "transportType": "stdio"
+    },
+    "my-server": {
+      "enabled": true,
+      "command": "python",
+      "args": [
+        "my_mcp_server.py"
+      ],
+      "hotreload": true,
+      "transportType": "stdio"
     }
   }
 }

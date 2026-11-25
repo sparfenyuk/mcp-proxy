@@ -12,6 +12,23 @@ from mcp.client.stdio import StdioServerParameters
 logger = logging.getLogger(__name__)
 
 
+class HotReloadStdioServerParameters(StdioServerParameters):
+    """Stdio server parameters for a server configured with ``hotreload: true``."""
+
+    watch_paths: list[Path]
+
+
+def _hotreload_flag(name: str, value: object) -> bool | None:
+    """Return the ``hotreload`` bool, or None (after a warning) when it is not a bool."""
+    if isinstance(value, bool):
+        return value
+    logger.warning(
+        "Named server '%s' from config has invalid 'hotreload' (must be a boolean). Skipping.",
+        name,
+    )
+    return None
+
+
 def _validated_entry(
     name: str, command: object, command_args: object, env: object
 ) -> tuple[str, list[str], dict[str, str]] | None:
@@ -66,6 +83,24 @@ def _validated_entry(
         )
         return None
     return command, command_args, env
+
+
+def _build_params(
+    name: str, command: str, args: list[str], env: dict[str, str], hotreload: bool
+) -> StdioServerParameters:
+    """Build plain parameters, or the hot-reload subclass with its watched files."""
+    if not hotreload:
+        return StdioServerParameters(command=command, args=args, env=env, cwd=None)
+    watch_paths = [Path(a) for a in args if Path(a).is_file()]
+    if not watch_paths:
+        logger.warning(
+            "Named server '%s' has hotreload enabled but no existing file in "
+            "'args'; hot reload is inactive.",
+            name,
+        )
+    return HotReloadStdioServerParameters(
+        command=command, args=args, env=env, cwd=None, watch_paths=watch_paths
+    )
 
 
 def load_named_server_configs_from_file(
@@ -132,15 +167,14 @@ def load_named_server_configs_from_file(
             continue
         command, command_args, env = validated
 
+        hotreload = _hotreload_flag(name, server_config.get("hotreload", False))
+        if hotreload is None:
+            continue
+
         new_env = base_env.copy()
         new_env.update(env)
 
-        named_stdio_params[name] = StdioServerParameters(
-            command=command,
-            args=command_args,
-            env=new_env,
-            cwd=None,
-        )
+        named_stdio_params[name] = _build_params(name, command, command_args, new_env, hotreload)
         logger.info(
             "Configured named server '%s' from config: %s %s",
             name,

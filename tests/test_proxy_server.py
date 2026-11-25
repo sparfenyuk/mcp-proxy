@@ -24,7 +24,8 @@ from mcp.shared.exceptions import McpError
 from mcp.shared.memory import create_connected_server_and_client_session
 from pydantic import AnyUrl
 
-from mcp_proxy.proxy_server import create_proxy_server
+from mcp_proxy import proxy_server
+from mcp_proxy.proxy_server import ListSubscribers, create_proxy_server
 
 TOOL_INPUT_SCHEMA = {"type": "object", "properties": {"input1": {"type": "string"}}}
 
@@ -960,3 +961,160 @@ async def test_call_tool_progress_forwarding_without_token(
 
         # Our optimization in proxy_server.py ensures that when no progressToken
         # is present, no progress_callback is created, avoiding unnecessary overhead.
+
+
+class _FakeSession:
+    """Stand-in for a ServerSession that records list_changed sends."""
+
+    def __init__(self, *, fail: bool = False, hang: bool = False) -> None:
+        self.fail = fail
+        self.hang = hang
+        self.sent: list[str] = []
+
+    async def _send(self, name: str) -> None:
+        if self.hang:
+            await anyio.sleep_forever()
+        if self.fail:
+            msg = "boom"
+            raise RuntimeError(msg)
+        self.sent.append(name)
+
+    async def send_tool_list_changed(self) -> None:
+        await self._send("tools")
+
+    async def send_prompt_list_changed(self) -> None:
+        await self._send("prompts")
+
+    async def send_resource_list_changed(self) -> None:
+        await self._send("resources")
+
+
+def _all_caps() -> types.ServerCapabilities:
+    return types.ServerCapabilities(
+        tools=types.ToolsCapability(),
+        prompts=types.PromptsCapability(),
+        resources=types.ResourcesCapability(),
+    )
+
+
+async def test_subscribers_registered_by_list_tools(
+    server_can_list_tools: Server[object],
+) -> None:
+    """A session that called tools/list is only in the tools subscriber set."""
+    subscribers = ListSubscribers()
+    async with in_memory(server_can_list_tools) as session:
+        wrapped_server = await create_proxy_server(session, subscribers)
+        async with in_memory(wrapped_server) as wrapped_session:
+            assert len(subscribers.tools) == 0
+            await wrapped_session.list_tools()
+            assert len(subscribers.tools) == 1
+            assert len(subscribers.prompts) == 0
+            assert len(subscribers.resources) == 0
+
+
+@pytest.mark.parametrize("prompt", [types.Prompt(name="prompt1")])
+async def test_subscribers_registered_by_list_prompts(
+    server_can_list_prompts: Server[object],
+) -> None:
+    """A session that called prompts/list is only in the prompts subscriber set."""
+    subscribers = ListSubscribers()
+    async with in_memory(server_can_list_prompts) as session:
+        wrapped_server = await create_proxy_server(session, subscribers)
+        async with in_memory(wrapped_server) as wrapped_session:
+            assert len(subscribers.prompts) == 0
+            await wrapped_session.list_prompts()
+            assert len(subscribers.prompts) == 1
+            assert len(subscribers.tools) == 0
+            assert len(subscribers.resources) == 0
+
+
+@pytest.mark.parametrize(
+    "resource",
+    [types.Resource(uri=AnyUrl("scheme://resource-uri"), name="resource-name")],
+)
+async def test_subscribers_registered_by_list_resources(
+    server_can_list_resources: Server[object],
+) -> None:
+    """A session that called resources/list is only in the resources subscriber set."""
+    subscribers = ListSubscribers()
+    async with in_memory(server_can_list_resources) as session:
+        wrapped_server = await create_proxy_server(session, subscribers)
+        async with in_memory(wrapped_server) as wrapped_session:
+            assert len(subscribers.resources) == 0
+            await wrapped_session.list_resources()
+            assert len(subscribers.resources) == 1
+            assert len(subscribers.tools) == 0
+            assert len(subscribers.prompts) == 0
+
+
+async def test_subscribers_notify_matching_sessions_only() -> None:
+    """Each list_changed kind goes only to sessions subscribed to that kind."""
+    subscribers = ListSubscribers()
+    tools_s, prompts_s, resources_s = _FakeSession(), _FakeSession(), _FakeSession()
+    subscribers.tools.add(tools_s)  # type: ignore[arg-type]
+    subscribers.prompts.add(prompts_s)  # type: ignore[arg-type]
+    subscribers.resources.add(resources_s)  # type: ignore[arg-type]
+    await subscribers.notify(_all_caps())
+    assert tools_s.sent == ["tools"]
+    assert prompts_s.sent == ["prompts"]
+    assert resources_s.sent == ["resources"]
+
+
+async def test_subscribers_notify_only_declared_capabilities() -> None:
+    """Only declared capabilities are notified."""
+    subscribers = ListSubscribers()
+    fake = _FakeSession()
+    subscribers.tools.add(fake)  # type: ignore[arg-type]
+    subscribers.prompts.add(fake)  # type: ignore[arg-type]
+    await subscribers.notify(types.ServerCapabilities(tools=types.ToolsCapability()))
+    assert fake.sent == ["tools"]
+
+
+async def test_subscribers_notify_survives_concurrent_add() -> None:
+    """Adding a session while a send is waiting does not break iteration."""
+    subscribers = ListSubscribers()
+    gate = anyio.Event()
+    first = _FakeSession()
+    second = _FakeSession()
+    late = _FakeSession()
+
+    async def slow_send() -> None:
+        await gate.wait()
+        first.sent.append("tools")
+
+    first.send_tool_list_changed = slow_send  # type: ignore[method-assign]
+    subscribers.tools.add(first)  # type: ignore[arg-type]
+    subscribers.tools.add(second)  # type: ignore[arg-type]
+    errors: list[BaseException] = []
+
+    async def run_notify() -> None:
+        try:
+            await subscribers.notify(_all_caps())
+        except BaseException as exc:
+            errors.append(exc)
+            raise
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(run_notify)
+        await anyio.sleep(0.05)
+        subscribers.tools.add(late)  # type: ignore[arg-type]
+        gate.set()
+    assert errors == []
+    assert first.sent == ["tools"]
+    assert second.sent == ["tools"]
+    assert late.sent == []
+
+
+async def test_subscribers_notify_isolates_hung_and_failing_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hung or failing send never prevents other sessions being notified."""
+    monkeypatch.setattr(proxy_server, "_NOTIFY_SEND_TIMEOUT_SECONDS", 0.05)
+    subscribers = ListSubscribers()
+    hung = _FakeSession(hang=True)
+    failing = _FakeSession(fail=True)
+    good = _FakeSession()
+    for fake in (hung, failing, good):
+        subscribers.tools.add(fake)  # type: ignore[arg-type]
+    await subscribers.notify(_all_caps())
+    assert good.sent == ["tools"]

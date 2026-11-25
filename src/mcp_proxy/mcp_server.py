@@ -5,9 +5,10 @@ import hmac
 import logging
 import math
 import sys
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Final, Literal
 from urllib.parse import SplitResult, urlsplit
 
@@ -28,7 +29,9 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import BaseRoute, Mount, Route
 from starlette.types import Receive, Scope, Send
 
-from .proxy_server import create_proxy_server
+from .config_loader import HotReloadStdioServerParameters
+from .proxy_server import ListSubscribers, create_proxy_server
+from .reconnecting_session import ReconnectingClientSession
 
 logger = logging.getLogger(__name__)
 
@@ -479,6 +482,7 @@ class _StdioExitWatch:
         self.startup_exited: set[str | None] = set()
         self.active: set[str | None] = set()
         self.closing: set[str | None] = set()
+        self.hot_stale: dict[str | None, Callable[[], None]] = {}
         self.startup_cancel_scope: anyio.CancelScope | None = None
         self.startup_stage = "spawn"
 
@@ -496,12 +500,14 @@ class _StdioExitWatch:
     def abandon(self, identity: str | None) -> None:
         self.starting.discard(identity)
         self.startup_exited.discard(identity)
+        self.hot_stale.pop(identity, None)
 
     @contextlib.asynccontextmanager
     async def client(
         self, params: StdioServerParameters, identity: str | None
     ) -> AsyncIterator[tuple[Any, Any]]:
         """Like stdio_client, but notice when the server's stdout closes."""
+        self.closing.discard(identity)
         async with stdio_client(params) as (read_stream, write_stream):
             send, receive = anyio.create_memory_object_stream[Any](0)
 
@@ -531,6 +537,9 @@ class _StdioExitWatch:
             self.startup_exited.add(identity)
             return
         if identity not in self.active:
+            return
+        if identity in self.hot_stale:
+            self.hot_stale[identity]()
             return
         display_name = "default" if identity is None else identity
         logger.error("Stdio server '%s' exited, shutting down", display_name)
@@ -562,6 +571,8 @@ async def _prepare_stdio_server_routes(
 ) -> list[BaseRoute]:
     """Prepare one stdio backend and register its lifetimes on the supplied stack."""
     stdio_exit.begin(identity)
+    if isinstance(params, HotReloadStdioServerParameters):
+        return await _prepare_hot_reload_routes(stack, stdio_exit, params, settings, identity)
     stdio_streams = await stack.enter_async_context(stdio_exit.client(params, identity))
     stdio_exit.startup_stage = "session"
     session = await stack.enter_async_context(ClientSession(*stdio_streams))
@@ -578,6 +589,113 @@ async def _prepare_stdio_server_routes(
     await stack.enter_async_context(http_manager.run())
     stdio_exit.activate(identity)
     return instance_routes
+
+
+async def _prepare_hot_reload_routes(
+    stack: contextlib.AsyncExitStack,
+    stdio_exit: _StdioExitWatch,
+    params: HotReloadStdioServerParameters,
+    settings: MCPServerSettings,
+    identity: str | None,
+) -> list[BaseRoute]:
+    """Prepare a hot-reload backend whose upstream session survives child replacement."""
+
+    @contextlib.asynccontextmanager
+    async def connect(_observer: object) -> AsyncIterator[ClientSession]:
+        async with stdio_exit.client(params, identity) as streams:
+            stdio_exit.startup_stage = "session"
+            async with ClientSession(*streams) as client_session:
+                stdio_exit.startup_stage = "initialize"
+                yield client_session
+
+    session = await stack.enter_async_context(
+        ReconnectingClientSession(
+            connect,
+            hot_reload=True,
+            initialize_timeout=settings.initialization_timeout,
+        )
+    )
+    subscribers = ListSubscribers()
+    proxy = await create_proxy_server(session, subscribers)  # type: ignore[arg-type]
+
+    stdio_exit.startup_stage = "routes"
+    instance_routes, http_manager = create_single_instance_routes(
+        proxy,
+        stateless_instance=settings.stateless,
+    )
+    stdio_exit.startup_stage = "manager"
+    await stack.enter_async_context(http_manager.run())
+    stdio_exit.hot_stale[identity] = session.mark_stale
+    stdio_exit.activate(identity)
+    if params.watch_paths:
+        await stack.enter_async_context(
+            _hot_reload_watch(identity, session, params.watch_paths, subscribers)
+        )
+    return instance_routes
+
+
+_HOT_RELOAD_POLL_SECONDS: Final[float] = 1.0
+_HOT_RELOAD_DEBOUNCE_SECONDS: Final[float] = 0.5
+
+
+@contextlib.asynccontextmanager
+async def _hot_reload_watch(
+    identity: str | None,
+    session: ReconnectingClientSession,
+    paths: Sequence[Path],
+    subscribers: ListSubscribers,
+) -> AsyncIterator[None]:
+    """Run the file watcher for the lifetime of the context."""
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(_watch_loop, identity, session, paths, subscribers)
+        try:
+            yield
+        finally:
+            tg.cancel_scope.cancel()
+
+
+def _stat_key(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def _snapshot(paths: Sequence[Path]) -> tuple[tuple[int, int] | None, ...]:
+    return tuple(_stat_key(path) for path in paths)
+
+
+async def _watch_loop(
+    identity: str | None,
+    session: ReconnectingClientSession,
+    paths: Sequence[Path],
+    subscribers: ListSubscribers,
+) -> None:
+    snapshot = _snapshot(paths)
+    while True:
+        await anyio.sleep(_HOT_RELOAD_POLL_SECONDS)
+        current = _snapshot(paths)
+        if current == snapshot:
+            continue
+        await anyio.sleep(_HOT_RELOAD_DEBOUNCE_SECONDS)
+        snapshot = _snapshot(paths)
+        try:
+            await _reload(session, subscribers)
+        except Exception as error:  # noqa: BLE001
+            logger.warning(
+                "Hot reload of server '%s' failed: %s. Fix the watched file; "
+                "the proxy retries on the next file change or request.",
+                identity,
+                error,
+            )
+
+
+async def _reload(session: ReconnectingClientSession, subscribers: ListSubscribers) -> None:
+    session.mark_stale()
+    await session.send_ping()
+    capabilities = (await session.initialize()).capabilities
+    await subscribers.notify(capabilities)
 
 
 class _StdioCandidateExitedError(Exception):

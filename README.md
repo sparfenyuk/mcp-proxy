@@ -262,6 +262,24 @@ The JSON file should follow this structure:
 - `enabled`: (Optional) If `false`, this server definition will be skipped. Defaults to `true`.
 - `timeout` and `transportType`: These fields are present in standard MCP client configurations but are currently **ignored** by `mcp-proxy` when loading named servers. The transport type is implicitly "stdio".
 
+### Hot reload
+
+Set `"hotreload": true` on a named stdio server to restart its child process when a file in its `args` changes. Only `args` entries that are existing regular files are watched; other entries are ignored. If none exist, a warning is logged and hot reload is inactive.
+
+```json
+"my-server": {
+  "command": "python",
+  "args": ["my_mcp_server.py"],
+  "hotreload": true
+}
+```
+
+- **Trigger**: a change to a watched file's modification time or size (polled about once per second). The proxy replaces the child immediately and sends `list_changed` notifications (tools, prompts, resources, as the server declares them) to clients that listed them; client sessions stay connected.
+- **Clients that ignore `list_changed`** must refresh their tool, resource and prompt lists manually.
+- **In-flight calls**: a reload waits up to 30 s for in-flight calls to finish, then abandons them (they receive an error), so worst-case reload latency is 30 s plus the initialization timeout.
+- **Not carried over**: log level (`logging/setLevel`) and resource subscriptions are reset; the new child starts with its defaults.
+- **Failures** are non-fatal: requests error while no child is available, and the proxy retries on the next file change or request. A replacement whose `capabilities` differ is refused until mcp-proxy is restarted.
+
 ## Installation
 
 ### Installing via PyPI
