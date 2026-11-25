@@ -951,7 +951,7 @@ async def test_cancelled_sole_lost_lease_shutdown_resolves_later_waiters() -> No
     old_operation_done = anyio.Event()
     initialize_gate = gate()
     old_operation_scope = anyio.CancelScope()
-    waiter_errors: list[RuntimeError] = []
+    waiter_errors: list[BaseException] = []
     waiters_done = anyio.Event()
     upstream = FakeUpstream()
 
@@ -1035,7 +1035,7 @@ async def test_closing_during_publish_retires_unpublished_candidate(
     publish_entered = anyio.Event()
     publish_completed = anyio.Event()
     waiter_done = anyio.Event()
-    errors: list[RuntimeError] = []
+    errors: list[BaseException] = []
     candidates: list[t.Any] = []
     upstream = FakeUpstream(scripts=[{"list_tools": [Http404(session_lost())]}])
     wrapper = ReconnectingClientSession(upstream.connect)
@@ -1563,3 +1563,534 @@ if __name__ == "__main__" and "--system-exit-child" in sys.argv:
         sys.stdout.write(f"SYSTEM_EXIT_PROPAGATED:{exc.code}\n")
         sys.stdout.flush()
         raise
+
+
+def hot_wrapper(
+    connect: SessionFactory,
+    initialize_timeout: float | None = None,
+) -> ReconnectingClientSession:
+    """Build a hot-reload wrapper for the stale and hot_reload tests."""
+    return ReconnectingClientSession(
+        connect,
+        hot_reload=True,
+        initialize_timeout=initialize_timeout,
+    )
+
+
+async def test_mark_stale_reconnects_on_next_operation_in_default_mode() -> None:
+    """mark_stale makes the next operation reconnect once."""
+    upstream = FakeUpstream()
+    async with open_wrapper(upstream.connect) as wrapper:
+        wrapper.mark_stale()
+        assert await wrapper.list_tools() == OK
+        assert upstream.connects == TWO_CONNECTS
+
+
+async def test_hot_reload_accepts_changed_server_version() -> None:
+    """With hot_reload serverInfo and instructions changes are accepted (REQ-007)."""
+    upstream = FakeUpstream()
+    newer = INITIALIZE_RESULT.model_copy(
+        update={
+            "serverInfo": types.Implementation(name="fake-upstream", version="2.0.0"),
+            "instructions": "changed instructions",
+        },
+    )
+    upstream.initialize_results = [INITIALIZE_RESULT, newer]
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with hot_wrapper(upstream.connect) as wrapper:
+            wrapper.mark_stale()
+            assert await wrapper.list_tools() == OK
+            assert await wrapper.list_tools() == OK
+    assert upstream.connects == TWO_CONNECTS
+
+
+async def test_hot_reload_changed_capabilities_is_permanent() -> None:
+    """A capabilities change raises the exact message and stays refused."""
+    upstream = FakeUpstream()
+    upstream.initialize_results = [INITIALIZE_RESULT, changed_handshake("capabilities")]
+    expected = "Upstream capabilities changed; restart mcp-proxy"
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with hot_wrapper(upstream.connect) as wrapper:
+            wrapper.mark_stale()
+            with pytest.raises(RuntimeError) as first:
+                await wrapper.list_tools()
+            assert str(first.value) == expected
+            with pytest.raises(RuntimeError) as second:
+                await wrapper.list_tools()
+            assert str(second.value) == expected
+    assert upstream.connects == TWO_CONNECTS
+
+
+@pytest.mark.parametrize("method", ["set_logging_level", "subscribe_resource"])
+async def test_hot_reload_stateful_method_then_stale_reconnects(method: str) -> None:
+    """hot_reload skips the state-lost refusal."""
+    upstream = FakeUpstream()
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with hot_wrapper(upstream.connect) as wrapper:
+            await getattr(wrapper, method)("state")
+            wrapper.mark_stale()
+            assert await wrapper.list_tools() == OK
+            assert await wrapper.list_tools() == OK
+    assert upstream.connects == TWO_CONNECTS
+
+
+async def test_default_mode_stateful_then_stale_keeps_state_lost() -> None:
+    """Without hot_reload the existing state-lost refusal is unchanged."""
+    upstream = FakeUpstream()
+    async with open_wrapper(upstream.connect) as wrapper:
+        await wrapper.set_logging_level("debug")
+        wrapper.mark_stale()
+        with pytest.raises(RuntimeError) as exc_info:
+            await wrapper.list_tools()
+        assert str(exc_info.value) == "Upstream session state was lost; restart the MCP client"
+
+
+async def test_hot_reload_progress_on_stale_session_still_refused() -> None:
+    """The progress branch is unchanged under hot_reload."""
+    upstream = FakeUpstream()
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with hot_wrapper(upstream.connect) as wrapper:
+            wrapper.mark_stale()
+            with pytest.raises(RuntimeError) as exc_info:
+                await wrapper.send_progress_notification(PROGRESS_ID, 1.0)
+            assert str(exc_info.value) == (
+                "Upstream session is unavailable for progress notifications"
+            )
+    assert upstream.connects == ONE_CONNECT
+
+
+async def test_initialize_timeout_fails_attempt_and_leaves_session_stale() -> None:
+    """A replacement that never answers initialize fails in time and stays stale."""
+    upstream = FakeUpstream()
+    upstream.initialize_gates[1] = gate()
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with hot_wrapper(upstream.connect, initialize_timeout=0.2) as wrapper:
+            wrapper.mark_stale()
+            with pytest.raises(TimeoutError):
+                await wrapper.list_tools()
+            upstream.initialize_gates[1].release.set()
+            assert await wrapper.list_tools() == OK
+    assert upstream.connects == THREE_CONNECTS
+    assert upstream.exits == upstream.connects
+
+
+DRAIN_TEST_TIMEOUT = 0.1
+DRAIN_WARNING = "Drain timed out after 0 s; abandoning 1 in-flight operation(s)"
+DRAIN_SETTLE = 0.05
+ABANDONED = (
+    "Upstream connection was replaced while this request was in flight; "
+    "it may or may not have completed"
+)
+
+
+def hang_until_closed(upstream: FakeUpstream) -> Callable[..., Awaitable[object]]:
+    """Return an operation that, like ClientSession, fails once its connection exits."""
+
+    async def hang(*_args: object, **_kwargs: object) -> object:
+        index = upstream.connects - 1
+        await upstream.closed[index].wait()
+        raise McpError(types.ErrorData(code=types.CONNECTION_CLOSED, message="Connection closed"))
+
+    return hang
+
+
+def recording_connect(upstream: FakeUpstream, events: list[str]) -> SessionFactory:
+    """Record connect enter and exit events around each fake connection."""
+
+    @asynccontextmanager
+    async def connect(observer: SessionObserver) -> AsyncIterator[ClientSession]:
+        index = upstream.connects
+        events.append(f"enter {index}")
+        try:
+            async with upstream.connect(observer) as session:
+                yield session
+        finally:
+            events.append(f"exit {index}")
+
+    return connect
+
+
+async def test_drain_timeout_replacement_proceeds_and_serves_new_connection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hung operation does not block the replacement past the drain bound."""
+    monkeypatch.setattr(reconnecting_session_module, "_DRAIN_TIMEOUT_SECONDS", DRAIN_TEST_TIMEOUT)
+    upstream = FakeUpstream()
+    upstream.scripts = [{"call_tool": [hang_until_closed(upstream)]}]
+    errors: list[BaseException] = []
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with (
+            hot_wrapper(upstream.connect) as wrapper,
+            anyio.create_task_group() as tg,
+        ):
+            tg.start_soon(record_error, wrapper, errors)
+            await anyio.sleep(DRAIN_SETTLE)
+            wrapper.mark_stale()
+            assert await wrapper.list_tools() == OK
+            assert upstream.connects == TWO_CONNECTS
+            assert [c[0] for c in upstream.sessions[1].calls] == ["list_tools"]
+
+
+async def test_drain_timeout_hung_caller_receives_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retire path fails the hung caller with the stable abandonment error."""
+    monkeypatch.setattr(reconnecting_session_module, "_DRAIN_TIMEOUT_SECONDS", DRAIN_TEST_TIMEOUT)
+    upstream = FakeUpstream()
+    upstream.scripts = [{"call_tool": [hang_until_closed(upstream)]}]
+    errors: list[BaseException] = []
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with (
+            hot_wrapper(upstream.connect) as wrapper,
+            anyio.create_task_group() as tg,
+        ):
+            tg.start_soon(record_error, wrapper, errors)
+            await anyio.sleep(DRAIN_SETTLE)
+            wrapper.mark_stale()
+            assert await wrapper.list_tools() == OK
+    assert [str(e) for e in errors] == [ABANDONED]
+    assert type(errors[0]) is RuntimeError
+
+
+async def test_drain_timeout_applies_to_permanent_refusal_retire(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The non-hot state-lost retire stops waiting for a hung operation too."""
+    monkeypatch.setattr(reconnecting_session_module, "_DRAIN_TIMEOUT_SECONDS", DRAIN_TEST_TIMEOUT)
+    upstream = FakeUpstream()
+    upstream.scripts = [{"call_tool": [hang_until_closed(upstream)]}]
+    errors: list[BaseException] = []
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with open_wrapper(upstream.connect) as wrapper:
+            await wrapper.set_logging_level("debug")
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(record_error, wrapper, errors)
+                await anyio.sleep(DRAIN_SETTLE)
+                wrapper.mark_stale()
+                with pytest.raises(RuntimeError, match="state was lost"):
+                    await wrapper.list_tools()
+                await upstream.closed[0].wait()
+    assert [str(e) for e in errors] == [ABANDONED]
+    assert upstream.connects == ONE_CONNECT
+
+
+async def test_normal_drain_is_not_delayed_and_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A short operation drains well inside the bound with no warning."""
+    upstream = FakeUpstream()
+
+    async def short(*_args: object, **_kwargs: object) -> object:
+        await anyio.sleep(DRAIN_SETTLE)
+        return OK
+
+    upstream.scripts = [{"call_tool": [short]}]
+    caplog.set_level(logging.WARNING)
+    errors: list[BaseException] = []
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with (
+            hot_wrapper(upstream.connect) as wrapper,
+            anyio.create_task_group() as tg,
+        ):
+            tg.start_soon(record_error, wrapper, errors)
+            await anyio.sleep(0.01)
+            wrapper.mark_stale()
+            start = anyio.current_time()
+            assert await wrapper.list_tools() == OK
+            assert anyio.current_time() - start < 1
+    assert "Drain timed out" not in caplog.text
+    assert errors == []
+
+
+async def test_drain_timeout_retires_old_connection_before_starting_replacement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After the bound expires the old context exits before the replacement enters."""
+    monkeypatch.setattr(reconnecting_session_module, "_DRAIN_TIMEOUT_SECONDS", DRAIN_TEST_TIMEOUT)
+    upstream = FakeUpstream()
+    upstream.scripts = [{"call_tool": [hang_until_closed(upstream)]}]
+    events: list[str] = []
+    upstream.exit_gates[0] = gate()
+    results: list[str] = []
+
+    async def later_request(wrapper: ReconnectingClientSession) -> None:
+        results.append(await wrapper.list_tools())  # type: ignore[arg-type]
+
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with (
+            hot_wrapper(recording_connect(upstream, events)) as wrapper,
+            anyio.create_task_group() as tg,
+        ):
+            tg.start_soon(record_error, wrapper, [])
+            await anyio.sleep(DRAIN_SETTLE)
+            wrapper.mark_stale()
+            tg.start_soon(later_request, wrapper)
+            await upstream.exit_gates[0].started.wait()
+            await anyio.sleep(DRAIN_SETTLE)
+            try:
+                assert "enter 1" not in events
+            finally:
+                upstream.exit_gates[0].release.set()
+    assert results == [OK]
+    assert events.index("exit 0") < events.index("enter 1")
+
+
+async def test_drain_timeout_logs_one_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The expired bound logs exactly one warning with the abandoned count."""
+    monkeypatch.setattr(reconnecting_session_module, "_DRAIN_TIMEOUT_SECONDS", DRAIN_TEST_TIMEOUT)
+    upstream = FakeUpstream()
+    upstream.scripts = [{"call_tool": [hang_until_closed(upstream)]}]
+    caplog.set_level(logging.WARNING)
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with (
+            hot_wrapper(upstream.connect) as wrapper,
+            anyio.create_task_group() as tg,
+        ):
+            tg.start_soon(record_error, wrapper, [])
+            await anyio.sleep(DRAIN_SETTLE)
+            wrapper.mark_stale()
+            assert await wrapper.list_tools() == OK
+    assert caplog.messages.count(DRAIN_WARNING) == 1
+
+
+def test_drain_timeout_constant_is_thirty_seconds() -> None:
+    """The production bound is 30 seconds."""
+    assert reconnecting_session_module._DRAIN_TIMEOUT_SECONDS == 30.0  # noqa: PLR2004, SLF001
+
+
+@asynccontextmanager
+async def real_silent_connect(_observer: SessionObserver) -> AsyncIterator[ClientSession]:
+    """Enter a real ClientSession over memory streams whose peer never reads or answers."""
+    to_peer_send, to_peer_receive = anyio.create_memory_object_stream[t.Any](10)
+    from_peer_send, from_peer_receive = anyio.create_memory_object_stream[t.Any](10)
+
+    async def initialize() -> types.InitializeResult:
+        return INITIALIZE_RESULT
+
+    async with (
+        to_peer_send,
+        to_peer_receive,
+        from_peer_send,
+        from_peer_receive,
+        ClientSession(from_peer_receive, to_peer_send) as session,
+    ):
+        session.initialize = initialize  # type: ignore[method-assign]
+        yield session
+
+
+async def record_error(
+    wrapper: ReconnectingClientSession,
+    outcomes: list[BaseException],
+    recorded: anyio.Event | None = None,
+) -> None:
+    """Run the hung call_tool and record whatever error it raises."""
+    try:
+        await wrapper.call_tool("hung", {})
+    except Exception as exc:  # noqa: BLE001 - record whatever the abandoned call raised
+        outcomes.append(exc)
+        if recorded is not None:
+            recorded.set()
+
+
+async def test_abandon_real_client_session_caller_receives_stable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real ClientSession does not fail its pending request on retire; the proxy must."""
+    monkeypatch.setattr(reconnecting_session_module, "_DRAIN_TIMEOUT_SECONDS", DRAIN_TEST_TIMEOUT)
+    outcomes: list[BaseException] = []
+    recorded = anyio.Event()
+
+    async def trigger(wrapper: ReconnectingClientSession) -> None:
+        await wrapper.list_tools()
+
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with hot_wrapper(real_silent_connect) as wrapper, anyio.create_task_group() as tg:
+            tg.start_soon(record_error, wrapper, outcomes, recorded)
+            await anyio.sleep(DRAIN_SETTLE)
+            wrapper.mark_stale()
+            tg.start_soon(trigger, wrapper)
+            await recorded.wait()
+            tg.cancel_scope.cancel()
+    assert [str(e) for e in outcomes] == [ABANDONED]
+
+
+def hang_forever(*_args: object, **_kwargs: object) -> Awaitable[object]:
+    """Return an operation that never completes on its own."""
+    return anyio.sleep_forever()  # type: ignore[return-value]
+
+
+async def test_abandon_outside_cancellation_is_not_converted() -> None:
+    """A caller cancelled from outside is cancelled, not turned into the abandoned error."""
+    upstream = FakeUpstream(scripts=[{"call_tool": [hang_forever]}])
+    outcomes: list[BaseException] = []
+    scopes: list[anyio.CancelScope] = []
+
+    async def caller(wrapper: ReconnectingClientSession) -> None:
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            await record_error(wrapper, outcomes)
+        assert scope.cancelled_caught
+
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with hot_wrapper(upstream.connect) as wrapper, anyio.create_task_group() as tg:
+            tg.start_soon(caller, wrapper)
+            await anyio.sleep(DRAIN_SETTLE)
+            scopes[0].cancel()
+    assert outcomes == []
+
+
+async def test_abandon_normal_operation_is_unaffected() -> None:
+    """A fast operation returns its result and leaves the connection alone."""
+    upstream = FakeUpstream()
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with hot_wrapper(upstream.connect) as wrapper:
+            assert await wrapper.call_tool("fast", {}) == OK
+            assert await wrapper.list_tools() == OK
+    assert upstream.connects == ONE_CONNECT
+
+
+async def test_abandon_releases_the_lease(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lease count returns to zero after an abandoned call."""
+    monkeypatch.setattr(reconnecting_session_module, "_DRAIN_TIMEOUT_SECONDS", DRAIN_TEST_TIMEOUT)
+    upstream = FakeUpstream(scripts=[{"call_tool": [hang_forever]}])
+    outcomes: list[BaseException] = []
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with hot_wrapper(upstream.connect) as wrapper, anyio.create_task_group() as tg:
+            old = wrapper._connection  # noqa: SLF001
+            assert old is not None
+            tg.start_soon(record_error, wrapper, outcomes)
+            await anyio.sleep(DRAIN_SETTLE)
+            assert old.leases == 1
+            wrapper.mark_stale()
+            assert await wrapper.list_tools() == OK
+            assert [str(e) for e in outcomes] == [ABANDONED]
+            assert old.leases == 0
+
+
+async def test_abandon_shutdown_with_operation_in_flight_does_not_hang() -> None:
+    """Leaving the wrapper while a call is in flight fails the call and returns."""
+    upstream = FakeUpstream(scripts=[{"call_tool": [hang_forever]}])
+    outcomes: list[BaseException] = []
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with anyio.create_task_group() as tg, hot_wrapper(upstream.connect) as wrapper:
+            tg.start_soon(record_error, wrapper, outcomes)
+            await anyio.sleep(DRAIN_SETTLE)
+    assert [str(e) for e in outcomes] == [ABANDONED]
+
+
+async def test_abandon_outside_cancellation_after_finished_wins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With the connection finished, the caller's own cancellation still propagates."""
+    monkeypatch.setattr(reconnecting_session_module, "_DRAIN_TIMEOUT_SECONDS", DRAIN_TEST_TIMEOUT)
+    upstream = FakeUpstream()
+    outcomes: list[BaseException] = []
+    scopes: list[anyio.CancelScope] = []
+
+    async def cancel_after_close(*_args: object, **_kwargs: object) -> object:
+        await upstream.closed[0].wait()
+        scopes[0].cancel()
+        return await anyio.sleep_forever()
+
+    upstream.scripts = [{"call_tool": [cancel_after_close]}]
+
+    async def caller(wrapper: ReconnectingClientSession) -> None:
+        with anyio.CancelScope() as scope:
+            scopes.append(scope)
+            await record_error(wrapper, outcomes)
+        assert scope.cancelled_caught
+
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with hot_wrapper(upstream.connect) as wrapper, anyio.create_task_group() as tg:
+            tg.start_soon(caller, wrapper)
+            await anyio.sleep(DRAIN_SETTLE)
+            wrapper.mark_stale()
+            assert await wrapper.list_tools() == OK
+    assert outcomes == []
+
+
+async def test_default_mode_replacement_abandons_hung_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without hot_reload a stale replacement still fails the hung caller with the stable error."""
+    monkeypatch.setattr(reconnecting_session_module, "_DRAIN_TIMEOUT_SECONDS", DRAIN_TEST_TIMEOUT)
+    upstream = FakeUpstream()
+    upstream.scripts = [{"call_tool": [hang_until_closed(upstream)]}]
+    errors: list[BaseException] = []
+    with anyio.fail_after(LIFECYCLE_TIMEOUT):
+        async with open_wrapper(upstream.connect) as wrapper, anyio.create_task_group() as tg:
+            tg.start_soon(record_error, wrapper, errors)
+            await anyio.sleep(DRAIN_SETTLE)
+            wrapper.mark_stale()
+            assert await wrapper.list_tools() == OK
+    assert upstream.connects == TWO_CONNECTS
+    assert [str(e) for e in errors] == [ABANDONED]
+    assert type(errors[0]) is RuntimeError
+
+
+async def _raise_in_groups(errors: list[BaseException], depth: int) -> None:
+    """Raise ``errors`` from child tasks, wrapped in ``depth`` nested task groups."""
+
+    async def fail(error: BaseException) -> None:
+        raise error
+
+    async with anyio.create_task_group() as task_group:
+        if depth > 1:
+            task_group.start_soon(_raise_in_groups, errors, depth - 1)
+        else:
+            for error in errors:
+                task_group.start_soon(fail, error)
+
+
+def _group_failing_connect(errors: list[BaseException], depth: int) -> SessionFactory:
+    """Return a session factory whose start fails inside ``depth`` task groups."""
+
+    @asynccontextmanager
+    async def connect(_observer: SessionObserver) -> AsyncIterator[ClientSession]:
+        await _raise_in_groups(errors, depth)
+        yield t.cast("ClientSession", None)  # pragma: no cover - the start always fails
+
+    return connect
+
+
+async def test_failed_start_unwraps_single_member_groups() -> None:
+    """A start that dies inside nested task groups reports the inner error itself."""
+    closed = McpError(types.ErrorData(code=-32000, message="Connection closed"))
+    with pytest.raises(McpError) as exc_info:
+        async with open_wrapper(_group_failing_connect([closed], 3)):
+            pytest.fail("start must fail")
+    assert exc_info.value is closed
+    assert str(exc_info.value) == "Connection closed"
+
+
+async def test_failed_start_keeps_multi_member_groups() -> None:
+    """A group holding two errors is not unwrapped; both causes stay visible."""
+    errors: list[BaseException] = [RuntimeError("first"), ValueError("second")]
+    with pytest.raises(BaseException) as exc_info:  # noqa: PT011 - the group type is version-specific
+        async with open_wrapper(_group_failing_connect(errors, 2)):
+            pytest.fail("start must fail")
+    assert len(exc_info.value.exceptions) == len(errors)  # type: ignore[attr-defined]
+
+
+async def test_hung_initialize_reports_the_timeout() -> None:
+    """An upstream that never answers initialize fails with a message naming the cause."""
+    upstream = FakeUpstream()
+    upstream.initialize_gates[0] = gate()
+    expected = "Upstream did not answer initialize within 0.05 s"
+    with anyio.fail_after(LIFECYCLE_TIMEOUT), pytest.raises(TimeoutError) as exc_info:
+        async with ReconnectingClientSession(upstream.connect, initialize_timeout=0.05):
+            pytest.fail("start must fail")
+    assert str(exc_info.value) == expected
+
+
+async def test_upstream_timeout_without_a_configured_limit_is_not_renamed() -> None:
+    """With no initialize timeout, an upstream's own TimeoutError keeps its text."""
+    upstream = FakeUpstream()
+    upstream.initialize_errors[0] = TimeoutError("upstream says no")
+    with pytest.raises(TimeoutError) as exc_info:
+        async with open_wrapper(upstream.connect):
+            pytest.fail("start must fail")
+    assert str(exc_info.value) == "upstream says no"

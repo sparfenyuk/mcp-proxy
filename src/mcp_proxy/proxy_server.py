@@ -6,12 +6,46 @@ This server is created independent of any transport mechanism.
 import json
 import logging
 import typing as t
+import weakref
 
+import anyio
 from mcp import server, types
 from mcp.client.session import ClientSession
 from mcp.server.lowlevel.server import request_ctx
 
+if t.TYPE_CHECKING:
+    from mcp.server.session import ServerSession
+
 logger = logging.getLogger(__name__)
+
+_NOTIFY_SEND_TIMEOUT_SECONDS = 5.0
+
+
+class ListSubscribers:
+    """Sessions that listed tools, prompts or resources, for list_changed notifications."""
+
+    def __init__(self) -> None:
+        """Create empty subscriber sets."""
+        self.tools: weakref.WeakSet[ServerSession] = weakref.WeakSet()
+        self.prompts: weakref.WeakSet[ServerSession] = weakref.WeakSet()
+        self.resources: weakref.WeakSet[ServerSession] = weakref.WeakSet()
+
+    async def notify(self, capabilities: types.ServerCapabilities) -> None:
+        """Send list_changed to subscribed sessions for each declared capability."""
+        targets = (
+            (capabilities.tools, self.tools, "send_tool_list_changed"),
+            (capabilities.prompts, self.prompts, "send_prompt_list_changed"),
+            (capabilities.resources, self.resources, "send_resource_list_changed"),
+        )
+        for declared, sessions, method in targets:
+            if not declared:
+                continue
+            for session in list(sessions):
+                try:
+                    with anyio.fail_after(_NOTIFY_SEND_TIMEOUT_SECONDS):
+                        await getattr(session, method)()
+                except Exception:  # noqa: PERF203
+                    logger.debug("%s failed for a session", method, exc_info=True)
 
 
 def _with_structured_content_text(result: types.CallToolResult) -> types.CallToolResult:
@@ -33,7 +67,10 @@ def _with_structured_content_text(result: types.CallToolResult) -> types.CallToo
     return result
 
 
-async def create_proxy_server(remote_app: ClientSession) -> server.Server[object]:  # noqa: C901, PLR0915
+async def create_proxy_server(  # noqa: C901, PLR0915
+    remote_app: ClientSession,
+    subscribers: ListSubscribers | None = None,
+) -> server.Server[object]:
     """Create a server instance from a remote app."""
     logger.debug("Sending initialization request to remote MCP server...")
     response = await remote_app.initialize()
@@ -50,6 +87,8 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         logger.debug("Capabilities: adding Prompts...")
 
         async def _list_prompts(req: types.ListPromptsRequest) -> types.ServerResult:
+            if subscribers is not None:
+                subscribers.prompts.add(app.request_context.session)
             result = await remote_app.list_prompts(params=req.params)
             return types.ServerResult(result)
 
@@ -65,6 +104,8 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         logger.debug("Capabilities: adding Resources...")
 
         async def _list_resources(req: types.ListResourcesRequest) -> types.ServerResult:
+            if subscribers is not None:
+                subscribers.resources.add(app.request_context.session)
             result = await remote_app.list_resources(params=req.params)
             return types.ServerResult(result)
 
@@ -112,6 +153,8 @@ async def create_proxy_server(remote_app: ClientSession) -> server.Server[object
         logger.debug("Capabilities: adding Tools...")
 
         async def _list_tools(req: t.Any) -> types.ServerResult:  # noqa: ANN401
+            if subscribers is not None:
+                subscribers.tools.add(app.request_context.session)
             tools = await remote_app.list_tools(
                 params=req.params if req is not None else None,
             )

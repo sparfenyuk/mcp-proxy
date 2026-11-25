@@ -11,7 +11,10 @@ from unittest.mock import Mock, patch
 import pytest
 from mcp.client.stdio import StdioServerParameters
 
-from mcp_proxy.config_loader import load_named_server_configs_from_file
+from mcp_proxy.config_loader import (
+    HotReloadStdioServerParameters,
+    load_named_server_configs_from_file,
+)
 
 
 @pytest.fixture
@@ -145,6 +148,14 @@ def test_load_example_fetch_config_if_uvx_exists() -> None:
     assert fetch_param.env == base_env
     # The 'timeout' and 'transportType' fields from the config are currently ignored by the loader,
     # so no need to assert them on StdioServerParameters.
+
+
+def test_example_config_has_exactly_one_hotreload_server() -> None:
+    """The example config loads with exactly one hot-reload server."""
+    example_config_path = Path(__file__).parent.parent / "config_example.json"
+    loaded_params = load_named_server_configs_from_file(example_config_path, {})
+    hot = [p for p in loaded_params.values() if isinstance(p, HotReloadStdioServerParameters)]
+    assert len(hot) == 1
 
 
 def test_invalid_config_format_missing_mcpservers(
@@ -346,3 +357,80 @@ def test_load_utf8_config(tmp_path: Path, bom: bytes) -> None:
 
     assert loaded_params["server1"].args == ["café"]
     assert loaded_params["server1"].env == {"GREETING": "안녕"}
+
+
+def test_hotreload_true_watches_only_existing_files(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str], tmp_path: Path
+) -> None:
+    """Hotreload true yields the subclass watching only existing files, in args order."""
+    server_py = tmp_path / "server.py"
+    server_py.write_text("")
+    cfg = create_temp_config_file(
+        {
+            "mcpServers": {
+                "hot": {
+                    "command": "python",
+                    "args": [str(server_py), "--flag", str(tmp_path / "missing.py")],
+                    "hotreload": True,
+                },
+            }
+        }
+    )
+    result = load_named_server_configs_from_file(cfg, {})
+    params = result["hot"]
+    assert isinstance(params, HotReloadStdioServerParameters)
+    assert params.watch_paths == [server_py]
+
+
+@pytest.mark.parametrize("extra", [{}, {"hotreload": False}])
+def test_hotreload_false_or_absent_is_plain(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str], extra: dict[str, t.Any]
+) -> None:
+    """False or absent hotreload yields a plain StdioServerParameters."""
+    cfg = create_temp_config_file({"mcpServers": {"s": {"command": "echo", **extra}}})
+    params = load_named_server_configs_from_file(cfg, {})["s"]
+    assert not isinstance(params, HotReloadStdioServerParameters)
+
+
+def test_hotreload_non_bool_skipped_sibling_kept(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A non-bool hotreload skips that entry with a named warning; siblings load."""
+    cfg = create_temp_config_file(
+        {
+            "mcpServers": {
+                "bad": {"command": "echo", "hotreload": "yes"},
+                "good": {"command": "echo"},
+            }
+        }
+    )
+    with caplog.at_level("WARNING"):
+        result = load_named_server_configs_from_file(cfg, {})
+    assert list(result) == ["good"]
+    assert (
+        "Named server 'bad' from config has invalid 'hotreload' (must be a boolean). Skipping."
+        in caplog.text
+    )
+
+
+def test_hotreload_no_existing_file_warns(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Hotreload with no existing file in args warns once and keeps an empty watch list."""
+    cfg = create_temp_config_file(
+        {"mcpServers": {"h": {"command": "echo", "args": ["nope.py"], "hotreload": True}}}
+    )
+    with caplog.at_level("WARNING"):
+        result = load_named_server_configs_from_file(cfg, {})
+    params = result["h"]
+    assert isinstance(params, HotReloadStdioServerParameters)
+    assert params.watch_paths == []
+    assert (
+        caplog.text.count(
+            "Named server 'h' has hotreload enabled but no existing file in 'args'; "
+            "hot reload is inactive."
+        )
+        == 1
+    )

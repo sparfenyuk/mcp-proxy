@@ -18,12 +18,14 @@ import pytest
 import uvicorn
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp import types
+from mcp.client.stdio import StdioServerParameters
 from mcp.server import Server
 from mcp.server.stdio import stdio_server as sdk_stdio_server
 from mcp.shared.message import SessionMessage
 from sse_starlette.sse import AppStatus
 
 from mcp_proxy import stdio as stdio_module
+from mcp_proxy.mcp_server import _StdioExitWatch
 from tests.test_mcp_server import BackgroundServer, create_starlette_app
 
 _MAX_STDIN_FRAME_BYTES = 4 * 1024 * 1024
@@ -824,3 +826,60 @@ async def test_stdin_eof_after_initialize(
             if process.returncode is None:
                 process.kill()
                 await process.communicate()
+
+
+def _hot_watch() -> tuple[_StdioExitWatch, list[str], uvicorn.Server]:
+    watch = _StdioExitWatch()
+    server = uvicorn.Server(uvicorn.Config(app=lambda *_: None))
+    watch.attach(server)
+    return watch, [], server
+
+
+def test_hot_exit_right_after_activation_marks_stale_not_shutdown() -> None:
+    """Exit of an active hot server marks it stale and keeps the proxy up."""
+    watch, calls, server = _hot_watch()
+    watch.begin("a")
+    watch.hot_stale["a"] = lambda: calls.append("stale")
+    watch.activate("a")
+    watch._on_exit("a")
+    assert calls == ["stale"]
+    assert not server.should_exit
+    assert not watch.exited
+
+
+def test_hot_exit_during_startup_is_startup_exit_not_stale() -> None:
+    """Exit before activation takes the startup path."""
+    watch, calls, server = _hot_watch()
+    watch.begin("a")
+    watch.hot_stale["a"] = lambda: calls.append("stale")
+    watch._on_exit("a")
+    assert calls == []
+    assert "a" in watch.startup_exited
+    assert not server.should_exit
+
+
+def test_hot_abandon_unregisters_and_non_hot_exit_still_stops_proxy() -> None:
+    """Abandon drops the registration; non-hot exit still stops the proxy."""
+    watch, calls, server = _hot_watch()
+    watch.begin("a")
+    watch.hot_stale["a"] = lambda: calls.append("stale")
+    watch.abandon("a")
+    assert "a" not in watch.hot_stale
+    watch.begin("b")
+    watch.activate("b")
+    watch._on_exit("b")
+    assert calls == []
+    assert server.should_exit
+    assert "b" in watch.exited
+
+
+async def test_hot_client_clears_closing_for_replacement() -> None:
+    """A replacement client clears the closing mark for its identity."""
+    watch = _StdioExitWatch()
+    watch.closing.add("a")
+    params = StdioServerParameters(
+        command=sys.executable, args=["-c", "import time; time.sleep(5)"]
+    )
+    async with watch.client(params, "a"):
+        assert "a" not in watch.closing
+    assert "a" in watch.closing

@@ -10,6 +10,7 @@ from http import HTTPStatus
 from types import TracebackType
 
 import anyio
+import anyio.lowlevel
 import httpx
 from mcp import types
 from mcp.client.session import ClientSession
@@ -22,11 +23,17 @@ logger = logging.getLogger(__name__)
 
 _NOT_CONNECTED = "Upstream session is not connected"
 _HANDSHAKE_CHANGED = "Upstream handshake changed; restart the MCP client"
+_CAPABILITIES_CHANGED = "Upstream capabilities changed; restart mcp-proxy"
 _STATE_LOST = "Upstream session state was lost; restart the MCP client"
 _PROGRESS_SESSION_LOST = "Upstream session is unavailable for progress notifications"
 _LOST_BEFORE_ADMISSION = "Upstream session was lost before the request started"
 _STATEFUL_METHODS = frozenset({"subscribe_resource", "unsubscribe_resource", "set_logging_level"})
 _PROGRESS_METHOD = "send_progress_notification"
+_DRAIN_TIMEOUT_SECONDS = 30.0
+_ABANDONED = (
+    "Upstream connection was replaced while this request was in flight; "
+    "it may or may not have completed"
+)
 
 
 class SessionObserver:
@@ -63,6 +70,15 @@ class SessionObserver:
 
 
 SessionFactory = t.Callable[[SessionObserver], AbstractAsyncContextManager[ClientSession]]
+
+
+def _unwrap_single(exc: BaseException) -> BaseException:
+    """Return the sole cause inside nested single-member exception groups."""
+    members: t.Sequence[BaseException] = getattr(exc, "exceptions", ())
+    while len(members) == 1:
+        exc = members[0]
+        members = getattr(exc, "exceptions", ())
+    return exc
 
 
 @dataclass
@@ -102,9 +118,17 @@ class _HandshakeChangedError(RuntimeError):
 class ReconnectingClientSession:
     """Lease public operations and recover only when a later operation is admitted."""
 
-    def __init__(self, connect: SessionFactory) -> None:
-        """Store the per-generation connection factory."""
+    def __init__(
+        self,
+        connect: SessionFactory,
+        *,
+        hot_reload: bool = False,
+        initialize_timeout: float | None = None,
+    ) -> None:
+        """Store the per-generation connection factory and the hot-reload options."""
         self._connect = connect
+        self._hot_reload = hot_reload
+        self._initialize_timeout = initialize_timeout
         self._connection: _Connection | None = None
         self._task_group: TaskGroup | None = None
         self._lock: anyio.Lock | None = None
@@ -171,6 +195,12 @@ class ReconnectingClientSession:
         await task_group.__aexit__(None, None, None)
         return None
 
+    def mark_stale(self) -> None:
+        """Make the next admitted operation start a replacement connection."""
+        connection = self._connection
+        if connection is not None:
+            connection.observer.lost.set()
+
     async def initialize(self) -> types.InitializeResult:
         """Return the immutable initial handshake used by the downstream proxy."""
         connection = self._connection
@@ -215,10 +245,43 @@ class ReconnectingClientSession:
         try:
             if connection.session is None:
                 raise RuntimeError(_NOT_CONNECTED)
-            return await getattr(connection.session, name)(*args, **kwargs)
+            return await self._run_abandonable(connection, name, args, kwargs)
         finally:
             with anyio.CancelScope(shield=True):
                 await self._release(connection)
+
+    async def _run_abandonable(
+        self,
+        connection: _Connection,
+        name: str,
+        args: tuple[t.Any, ...],
+        kwargs: dict[str, t.Any],
+    ) -> t.Any:  # noqa: ANN401
+        """Run the operation, failing it with _ABANDONED once its connection has finished."""
+        error: Exception | None = None
+        result: t.Any = None
+
+        async def watch(scope: anyio.CancelScope) -> None:
+            await connection.finished.wait()
+            scope.cancel()
+
+        scope = anyio.CancelScope()
+        async with anyio.create_task_group() as watcher:
+            watcher.start_soon(watch, scope)
+            with scope:
+                try:
+                    result = await getattr(connection.session, name)(*args, **kwargs)
+                except Exception as exc:  # noqa: BLE001 - classified after the scope
+                    error = exc
+            watcher.cancel_scope.cancel()
+
+        if error is None and not scope.cancelled_caught:
+            return result
+        # The caller's own cancellation, if pending, is raised here and wins.
+        await anyio.lowlevel.checkpoint()
+        if connection.finished.is_set():
+            raise RuntimeError(_ABANDONED) from error
+        raise error  # type: ignore[misc]
 
     async def _admit(self, name: str) -> tuple[_Connection | None, _Attempt | None]:
         """Lease the healthy generation or join the single shared replacement."""
@@ -236,7 +299,7 @@ class ReconnectingClientSession:
             if connection is None:
                 raise RuntimeError(_NOT_CONNECTED)
             if connection.observer.lost.is_set():
-                if self._stateful_operations_used:
+                if self._stateful_operations_used and not self._hot_reload:
                     self._permanent_error = _STATE_LOST
                     self._retire_once(connection)
                     raise RuntimeError(_STATE_LOST)
@@ -318,11 +381,22 @@ class ReconnectingClientSession:
         finally:
             await self._finish_replacement(attempt)
 
+    async def _bounded_drain(self, connection: _Connection) -> None:
+        """Wait for admitted operations, abandoning them after the drain timeout."""
+        with anyio.move_on_after(_DRAIN_TIMEOUT_SECONDS) as scope:
+            await connection.drained.wait()
+        if scope.cancelled_caught:
+            logger.warning(
+                "Drain timed out after %.0f s; abandoning %d in-flight operation(s)",
+                _DRAIN_TIMEOUT_SECONDS,
+                connection.leases,
+            )
+
     async def _prepare_replacement(self, attempt: _Attempt, stale: _Connection) -> None:
         """Drain the old owner and publish one initialized matching candidate."""
         candidate: _Connection | None = None
         try:
-            await stale.drained.wait()
+            await self._bounded_drain(stale)
             if self._closing:
                 return
             stale.retire.set()
@@ -336,7 +410,7 @@ class ReconnectingClientSession:
             if candidate.error is not None:
                 await candidate.finished.wait()
                 if isinstance(candidate.error, _HandshakeChangedError):
-                    self._permanent_error = _HANDSHAKE_CHANGED
+                    self._permanent_error = str(candidate.error)
                 attempt.error = candidate.error
             elif not await self._publish_replacement(candidate, attempt):
                 attempt.error = RuntimeError(_NOT_CONNECTED)
@@ -382,7 +456,7 @@ class ReconnectingClientSession:
 
     async def _retire_connection(self, connection: _Connection) -> None:
         """Close a lost generation after admitted operations finish when recovery is refused."""
-        await connection.drained.wait()
+        await self._bounded_drain(connection)
         connection.retire.set()
         await connection.finished.wait()
 
@@ -395,6 +469,18 @@ class ReconnectingClientSession:
         if task_group is not None:
             task_group.start_soon(self._retire_connection, connection)
 
+    async def _initialize(self, session: ClientSession) -> types.InitializeResult:
+        """Initialize the session, naming the cause when the configured timeout expires."""
+        timeout = self._initialize_timeout
+        try:
+            with anyio.fail_after(timeout):
+                return await session.initialize()
+        except TimeoutError:
+            if timeout is None:
+                raise
+            message = f"Upstream did not answer initialize within {timeout} s"
+            raise TimeoutError(message) from None
+
     async def _run_connection(self, connection: _Connection) -> None:
         """Own one transport and ClientSession from entry through exit."""
         if self._closing:
@@ -404,13 +490,16 @@ class ReconnectingClientSession:
             return
         try:
             async with self._connect(connection.observer) as session:
-                initialize_result = await session.initialize()
+                initialize_result = await self._initialize(session)
                 connection.observer.establish()
                 handshake = initialize_result.model_dump(mode="json")
+                if self._hot_reload:
+                    handshake = {"capabilities": handshake["capabilities"]}
                 if self._baseline_handshake is None:
                     self._baseline_handshake = handshake
                 elif handshake != self._baseline_handshake:
-                    connection.error = _HandshakeChangedError(_HANDSHAKE_CHANGED)
+                    message = _CAPABILITIES_CHANGED if self._hot_reload else _HANDSHAKE_CHANGED
+                    connection.error = _HandshakeChangedError(message)
                     connection.ready.set()
                     return
 
@@ -420,7 +509,7 @@ class ReconnectingClientSession:
                 await connection.retire.wait()
         except BaseException as exc:
             if not connection.ready.is_set():
-                connection.error = exc
+                connection.error = _unwrap_single(exc)
                 connection.ready.set()
             elif isinstance(exc, Exception):
                 logger.debug("Upstream connection ended: %s", exc)
