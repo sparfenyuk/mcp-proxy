@@ -122,6 +122,9 @@ def load_named_server_configs_from_file(
         if not server_config.get("enabled", True):  # Default to True if 'enabled' is not present
             logger.info("Named server '%s' from config is not enabled. Skipping.", name)
             continue
+        if not name:
+            logger.warning("Skipping named server entry with an empty name in config.")
+            continue
 
         command = server_config.get("command")
         command_args = server_config.get("args", [])
