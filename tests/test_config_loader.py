@@ -294,6 +294,46 @@ def test_server_entry_invalid_env_type(
     )
 
 
+@patch("mcp_proxy.config_loader.logger")
+def test_server_entry_empty_name_skipped(
+    mock_logger: Mock,
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+) -> None:
+    """Test handling of a server entry with an empty name.
+
+    An empty key (``"mcpServers": {"": {...}}``) must be skipped with a
+    warning, like a malformed env or a missing command, instead of
+    producing a broken ``/servers/`` route. Healthy entries must still load.
+    """
+    config_content = {
+        "mcpServers": {
+            "": {"command": "echo", "args": ["hello"]},
+            "server_good": {"command": "echo", "args": ["hi"]},
+        },
+    }
+    tmp_config_path = create_temp_config_file(config_content)
+    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+    assert "" not in loaded_params
+    assert "server_good" in loaded_params
+    mock_logger.warning.assert_called_with(
+        "Skipping named server entry with an empty name in config.",
+    )
+
+
+def test_only_empty_name_entry_loads_nothing(
+    create_temp_config_file: Callable[[dict[str, t.Any]], str],
+) -> None:
+    """Test that a config with only an empty-named entry loads no servers.
+
+    Otherwise the loader would return a bogus entry and the caller's
+    "no stdio servers configured" guard would be bypassed.
+    """
+    config_content = {"mcpServers": {"": {"command": "echo", "args": ["hello"]}}}
+    tmp_config_path = create_temp_config_file(config_content)
+    loaded_params = load_named_server_configs_from_file(tmp_config_path, {})
+    assert len(loaded_params) == 0
+
+
 def test_empty_mcpservers_dict(create_temp_config_file: Callable[[dict[str, t.Any]], str]) -> None:
     """Test handling of configuration files with empty mcpServers dictionary."""
     config_content: dict[str, t.Any] = {"mcpServers": {}}
