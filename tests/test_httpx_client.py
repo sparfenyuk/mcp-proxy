@@ -74,6 +74,24 @@ async def test_selected_httpx_client_keeps_string_ssl_normalization(
     assert supplied["verify"] is expected
 
 
+def test_custom_httpx_client_does_not_log_certificate_path(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The factory forwards custom CA paths without putting them in logs."""
+    supplied: dict[str, Any] = {}
+
+    class SelectedClient(httpx.AsyncClient):
+        def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401
+            supplied.update(kwargs)
+
+    certificate_path = "/private/secret-cert-bundle.pem"
+    with caplog.at_level(logging.DEBUG, logger="mcp_proxy.httpx_client"):
+        custom_httpx_client(verify_ssl=certificate_path, client_class=SelectedClient)
+
+    assert supplied["verify"] == certificate_path
+    assert certificate_path not in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_custom_httpx_client_does_not_follow_redirects(
     monkeypatch: pytest.MonkeyPatch,
@@ -442,6 +460,7 @@ async def test_cli_logging_hides_transport_secrets_and_keeps_safe_diagnostics(  
             )
         return httpx.Response(
             200,
+            extensions={"reason_phrase": b"arbitrary-response-reason-secret"},
             json={
                 "jsonrpc": "2.0",
                 "id": message["id"],
@@ -535,13 +554,16 @@ async def test_cli_logging_hides_transport_secrets_and_keeps_safe_diagnostics(  
         "location-secret",
         "session-secret",
         "body-secret",
+        "arbitrary-response-reason-secret",
     ):
         assert secret not in output
-    assert "HTTP Request: GET http://source.invalid/sse" in output
-    assert "HTTP Request: POST http://source.invalid/mcp" in output
-    assert "200 OK" in output
+    assert "HTTP Request: GET" in output
+    assert "HTTP Request: POST" in output
+    assert "HTTP Response: POST - 200" in output
+    assert "source.invalid" not in output
+    assert "/sse" not in output
+    assert "/mcp" not in output
     assert "visible-warning-marker" in output
     assert "visible-error-marker" in output
     assert "visible-sse-warning-marker" in output
     assert "visible-sse-error-marker" in output
-    assert "200 OK" in output
