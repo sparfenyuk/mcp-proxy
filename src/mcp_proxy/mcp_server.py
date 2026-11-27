@@ -679,7 +679,7 @@ async def _serve_mcp_server(
     named_server_params: dict[str, StdioServerParameters],
     security_settings: TransportSecuritySettings,
     stdio_exit: _StdioExitWatch,
-) -> None:
+) -> KeyboardInterrupt | None:
     """Acquire backends, then serve only routes for successfully prepared instances."""
     all_routes: list[BaseRoute] = [
         Route("/status", endpoint=_handle_status),  # Global status endpoint
@@ -746,7 +746,7 @@ async def _serve_mcp_server(
 
         if not default_server_params and not named_server_params:
             logger.error("No servers configured to run.")
-            return
+            return None
         if not default_server_params and not active_named_server_params:
             logger.error("No named servers could be started.")
             sys.exit(1)
@@ -800,7 +800,14 @@ async def _serve_mcp_server(
             mcp_settings.bind_host,
             mcp_settings.port,
         )
-        await http_server.serve()
+        try:
+            await http_server.serve()
+        except KeyboardInterrupt as exc:
+            # Uvicorn can re-raise SIGINT directly on Python 3.10. Let the task
+            # groups close before propagating it, so they do not wrap the interrupt.
+            return exc
+
+    return None
 
 
 async def run_mcp_server(
@@ -826,12 +833,14 @@ async def run_mcp_server(
 
     with anyio.CancelScope() as startup_cancel_scope:
         stdio_exit.startup_cancel_scope = startup_cancel_scope
-        await _serve_mcp_server(
+        interrupt = await _serve_mcp_server(
             mcp_settings,
             default_server_params,
             named_server_params,
             security_settings,
             stdio_exit,
         )
+        if interrupt is not None:
+            raise interrupt
 
     stdio_exit.exit_if_exited()

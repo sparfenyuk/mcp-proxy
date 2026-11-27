@@ -13,6 +13,7 @@ import logging
 import math
 import os
 import shlex
+import signal
 import sys
 import typing as t
 from importlib.metadata import version
@@ -594,13 +595,16 @@ def main() -> None:
 
     # Create MCP server settings and run the server
     mcp_settings = _create_mcp_settings(args_parsed)
-    asyncio.run(
-        run_mcp_server(
-            default_server_params=default_stdio_params,
-            named_server_params=named_stdio_params,
-            mcp_settings=mcp_settings,
-        ),
-    )
+    try:
+        asyncio.run(
+            run_mcp_server(
+                default_server_params=default_stdio_params,
+                named_server_params=named_stdio_params,
+                mcp_settings=mcp_settings,
+            ),
+        )
+    except KeyboardInterrupt:
+        raise SystemExit(128 + signal.SIGINT) from None
 
 
 if __name__ == "__main__":

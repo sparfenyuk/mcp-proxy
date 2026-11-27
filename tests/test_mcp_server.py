@@ -2197,6 +2197,31 @@ async def test_run_mcp_server_exits_non_zero_when_stdio_server_exits(*, named: b
     assert exc_info.value.code == 1
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Requires POSIX subprocess SIGINT")
+async def test_cli_sigint_exits_without_traceback(tmp_path: Path) -> None:
+    """The HTTP server CLI reports an interrupt after reaping its stdio backend."""
+    child_pid = tmp_path / "child-pid"
+    child_stopped = tmp_path / "child-stopped"
+    backend_script = tmp_path / "backend.py"
+    backend_script.write_text(_issue198_stdio_server_script("sigint", child_pid, child_stopped))
+    process = await _start_named_stdio_proxy(
+        [("sigint", shlex.join([sys.executable, str(backend_script)]))],
+    )
+    try:
+        _, startup_output = await _wait_for_proxy_url(process)
+        process.send_signal(signal.SIGINT)
+        shutdown_output, _ = await asyncio.wait_for(process.communicate(), timeout=12)
+    finally:
+        await _stop_stdio_proxy(process)
+
+    output = startup_output + shutdown_output.decode(errors="replace")
+    assert process.returncode == 130, output
+    assert "Traceback" not in output
+    assert "KeyboardInterrupt" not in output
+    await _wait_for_file(child_stopped)
+    _assert_pid_reaped(child_pid)
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM is not available on Windows")
 async def test_sigterm_bounds_shutdown_with_pending_streamable_call(tmp_path: Path) -> None:
     """An active StreamableHTTP tool call cannot keep the real CLI proxy alive."""
